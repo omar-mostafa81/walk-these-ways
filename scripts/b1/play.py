@@ -119,10 +119,12 @@ def play_b1(headless=True):
     for i in tqdm(range(num_eval_steps)):
         with torch.no_grad():
             actions = policy(obs)
+
         if i > 300:
-            pitch_cmd = 0.0
-            x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, 0.0
+            pitch_cmd = 0.7
+            x_vel_cmd, y_vel_cmd, yaw_vel_cmd = 0.0, 0.0, -0.1
             footswing_height_cmd = 0.0
+            body_height_cmd = 0.1
 
 
         env.commands[:, 0] = x_vel_cmd

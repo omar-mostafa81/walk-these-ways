@@ -19,7 +19,6 @@ class HistoryWrapper(gym.Wrapper):
         # privileged information and observation history are stored in info
         obs, rew, done, info = self.env.step(action)
         privileged_obs = info["privileged_obs"]
-
         self.obs_history = torch.cat((self.obs_history[:, self.env.num_obs:], obs), dim=-1)
         return {'obs': obs, 'privileged_obs': privileged_obs, 'obs_history': self.obs_history}, rew, done, info
 
@@ -52,10 +51,11 @@ if __name__ == "__main__":
     from gym_learn.ppo.actor_critic import AC_Args
 
     from b1_gym.envs.base.legged_robot_config import Cfg
-    from b1_gym.envs.mini_cheetah.mini_cheetah_config import config_mini_cheetah
-    config_mini_cheetah(Cfg)
+    from b1_gym.envs.b1.b1_config import config_b1
+    config_b1(Cfg)
+    from b1_gym.envs.b1.velocity_tracking import VelocityTrackingEasyEnv
 
-    test_env = gym.make("VelocityTrackingEasyEnv-v0", cfg=Cfg)
+    test_env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
     env = HistoryWrapper(test_env)
 
     env.reset()

@@ -4,7 +4,7 @@
 <!-- |    EDITING THIS FILE BY HAND IS NOT RECOMMENDED                                 | -->
 <!-- =================================================================================== -->
 <robot name="b1_description">
-  <material name="black">
+    <material name="black">
     <color rgba="0.0 0.0 0.0 1.0"/>
   </material>
   <material name="blue">
@@ -14,7 +14,7 @@
     <color rgba="0.0 0.8 0.0 1.0"/>
   </material>
   <material name="grey">
-    <color rgba="0.2 0.2 0.2 1.0"/>
+    <color rgba="0.7 0.7 0.7 1.0"/>
   </material>
   <material name="silver">
     <color rgba="0.913725490196 0.913725490196 0.847058823529 1.0"/>
@@ -53,7 +53,7 @@
       <geometry>
         <mesh filename="../meshes/trunk.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -116,7 +116,7 @@
       <geometry>
         <mesh filename="../meshes/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 -0.08 0"/>
@@ -137,7 +137,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 0"/>
@@ -173,7 +173,7 @@
       <geometry>
         <mesh filename="../meshes/thigh_mirror.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -194,7 +194,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -230,7 +230,7 @@
       <geometry>
         <mesh filename="../meshes/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -251,7 +251,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -278,7 +278,7 @@
       <geometry>
         <sphere radius="0.03"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -317,7 +317,7 @@
       <geometry>
         <mesh filename="../meshes/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0.08 0"/>
@@ -338,7 +338,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 0"/>
@@ -374,7 +374,7 @@
       <geometry>
         <mesh filename="../meshes/thigh.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -395,7 +395,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -431,7 +431,7 @@
       <geometry>
         <mesh filename="../meshes/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -452,7 +452,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -479,7 +479,7 @@
       <geometry>
         <sphere radius="0.03"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -518,7 +518,7 @@
       <geometry>
         <mesh filename="../meshes/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 -0.08 0"/>
@@ -539,7 +539,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 0"/>
@@ -575,7 +575,7 @@
       <geometry>
         <mesh filename="../meshes/thigh_mirror.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -596,7 +596,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -632,7 +632,7 @@
       <geometry>
         <mesh filename="../meshes/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -653,7 +653,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -680,7 +680,7 @@
       <geometry>
         <sphere radius="0.03"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -719,7 +719,7 @@
       <geometry>
         <mesh filename="../meshes/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0.08 0"/>
@@ -740,7 +740,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 0"/>
@@ -776,7 +776,7 @@
       <geometry>
         <mesh filename="../meshes/thigh.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="silver"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -797,7 +797,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -833,7 +833,7 @@
       <geometry>
         <mesh filename="../meshes/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 1.57079632679 0" xyz="0 0 -0.175"/>
@@ -854,7 +854,7 @@
       <geometry>
         <cylinder length="0.02" radius="0.05"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <!-- <collision>
       <origin rpy="1.57079632679 0 0" xyz="0 0 0"/>
@@ -881,7 +881,7 @@
       <geometry>
         <sphere radius="0.03"/>
       </geometry>
-      <material name="green"/>
+      <material name="black"/>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
