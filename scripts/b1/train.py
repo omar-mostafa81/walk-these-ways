@@ -1,22 +1,22 @@
-def train_go1(headless=True):
+def train_b1(headless=True):
 
     import isaacgym
     assert isaacgym
     import torch
 
-    from go1_gym.envs.base.legged_robot_config import Cfg
-    from go1_gym.envs.go1.go1_config import config_go1
-    from go1_gym.envs.go1.velocity_tracking import VelocityTrackingEasyEnv
+    from b1_gym.envs.base.legged_robot_config import Cfg
+    from b1_gym.envs.b1.b1_config import config_b1
+    from b1_gym.envs.b1.velocity_tracking import VelocityTrackingEasyEnv
 
     from ml_logger import logger
 
     from gym_learn.ppo_cse import Runner
-    from go1_gym.envs.wrappers.history_wrapper import HistoryWrapper
+    from b1_gym.envs.wrappers.history_wrapper import HistoryWrapper
     from gym_learn.ppo_cse.actor_critic import AC_Args
     from gym_learn.ppo_cse.ppo import PPO_Args
     from gym_learn.ppo_cse import RunnerArgs
 
-    config_go1(Cfg)
+    config_b1(Cfg)
 
     Cfg.commands.num_lin_vel_bins = 30
     Cfg.commands.num_ang_vel_bins = 30
@@ -29,7 +29,8 @@ def train_go1(headless=True):
 
     Cfg.domain_rand.lag_timesteps = 6
     Cfg.domain_rand.randomize_lag_timesteps = True
-    Cfg.control.control_type = "actuator_net"
+    # Cfg.control.control_type = "actuator_net"
+    Cfg.control.control_type = "P"
 
     Cfg.domain_rand.randomize_rigids_after_start = False
     Cfg.env.priv_observe_motion = False
@@ -44,14 +45,14 @@ def train_go1(headless=True):
     Cfg.domain_rand.restitution_range = [0.0, 0.4]
     Cfg.domain_rand.randomize_base_mass = True
     Cfg.env.priv_observe_base_mass = False
-    Cfg.domain_rand.added_mass_range = [-1.0, 3.0]
+    Cfg.domain_rand.added_mass_range = [-4.0, 7.0]
     Cfg.domain_rand.randomize_gravity = True
     Cfg.domain_rand.gravity_range = [-1.0, 1.0]
     Cfg.domain_rand.gravity_rand_interval_s = 8.0
     Cfg.domain_rand.gravity_impulse_duration = 0.99
     Cfg.env.priv_observe_gravity = False
     Cfg.domain_rand.randomize_com_displacement = False
-    Cfg.domain_rand.com_displacement_range = [-0.15, 0.15]
+    Cfg.domain_rand.com_displacement_range = [-0.25, 0.25]
     Cfg.env.priv_observe_com_displacement = False
     Cfg.domain_rand.randomize_ground_friction = True
     Cfg.env.priv_observe_ground_friction = False
@@ -61,7 +62,7 @@ def train_go1(headless=True):
     Cfg.domain_rand.motor_strength_range = [0.9, 1.1]
     Cfg.env.priv_observe_motor_strength = False
     Cfg.domain_rand.randomize_motor_offset = True
-    Cfg.domain_rand.motor_offset_range = [-0.02, 0.02]
+    Cfg.domain_rand.motor_offset_range = [-0.04, 0.04]
     Cfg.env.priv_observe_motor_offset = False
     Cfg.domain_rand.push_robots = False
     Cfg.domain_rand.randomize_Kp_factor = False
@@ -121,7 +122,7 @@ def train_go1(headless=True):
     Cfg.reward_scales.dof_pos = -0.0
     Cfg.reward_scales.jump = 10.0
     Cfg.reward_scales.base_height = 0.0
-    Cfg.rewards.base_height_target = 0.30
+    Cfg.rewards.base_height_target = 0.55
     Cfg.reward_scales.estimation_bonus = 0.0
     Cfg.reward_scales.raibert_heuristic = -10.0
     Cfg.reward_scales.feet_impact_vel = -0.0
@@ -137,7 +138,7 @@ def train_go1(headless=True):
     Cfg.reward_scales.feet_air_time = 0.0
     Cfg.reward_scales.hop_symmetry = 0.0
     Cfg.rewards.kappa_gait_probs = 0.07
-    Cfg.rewards.gait_force_sigma = 100.
+    Cfg.rewards.gait_force_sigma = 100.*4
     Cfg.rewards.gait_vel_sigma = 10.
     Cfg.reward_scales.tracking_contacts_shaped_force = 4.0
     Cfg.reward_scales.tracking_contacts_shaped_vel = 4.0
@@ -153,8 +154,9 @@ def train_go1(headless=True):
     Cfg.commands.lin_vel_x = [-1.0, 1.0]
     Cfg.commands.lin_vel_y = [-0.6, 0.6]
     Cfg.commands.ang_vel_yaw = [-1.0, 1.0]
-    Cfg.commands.body_height_cmd = [-0.25, 0.15]
-    Cfg.commands.gait_frequency_cmd_range = [2.0, 4.0]
+    # Cfg.commands.body_height_cmd = [-0.25, 0.15]
+    Cfg.commands.body_height_cmd = [-0.2, 0.1]
+    Cfg.commands.gait_frequency_cmd_range = [1.5, 2.5]
     Cfg.commands.gait_phase_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_offset_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_bound_cmd_range = [0.0, 1.0]
@@ -162,23 +164,29 @@ def train_go1(headless=True):
     Cfg.commands.footswing_height_range = [0.03, 0.35]
     Cfg.commands.body_pitch_range = [-0.4, 0.4]
     Cfg.commands.body_roll_range = [-0.0, 0.0]
-    Cfg.commands.stance_width_range = [0.10, 0.45]
-    Cfg.commands.stance_length_range = [0.35, 0.45]
+    # Cfg.commands.stance_width_range = [0.10, 0.45]
+    # Cfg.commands.stance_length_range = [0.35, 0.45]
+    Cfg.commands.stance_width_range = [0.42, 0.6]
+    Cfg.commands.stance_length_range = [0.8, 0.95]
 
-    Cfg.commands.limit_vel_x = [-5.0, 5.0]
+    Cfg.commands.limit_vel_x = [-5, 5]
     Cfg.commands.limit_vel_y = [-0.6, 0.6]
     Cfg.commands.limit_vel_yaw = [-5.0, 5.0]
+    # Cfg.commands.limit_body_height = [-0.25, 0.15]
     Cfg.commands.limit_body_height = [-0.25, 0.15]
-    Cfg.commands.limit_gait_frequency = [2.0, 4.0]
+    Cfg.commands.limit_gait_frequency = [1.5, 3.0]
     Cfg.commands.limit_gait_phase = [0.0, 1.0]
     Cfg.commands.limit_gait_offset = [0.0, 1.0]
     Cfg.commands.limit_gait_bound = [0.0, 1.0]
     Cfg.commands.limit_gait_duration = [0.5, 0.5]
-    Cfg.commands.limit_footswing_height = [0.03, 0.35]
+    Cfg.commands.limit_footswing_height = [0.03, 0.3]
     Cfg.commands.limit_body_pitch = [-0.4, 0.4]
     Cfg.commands.limit_body_roll = [-0.0, 0.0]
-    Cfg.commands.limit_stance_width = [0.10, 0.45]
-    Cfg.commands.limit_stance_length = [0.35, 0.45]
+    # Cfg.commands.limit_stance_width = [0.10, 0.45]
+    # Cfg.commands.limit_stance_length = [0.35, 0.45]
+    # B1 Robot is larger
+    Cfg.commands.limit_stance_width = [0.4, 0.55]
+    Cfg.commands.limit_stance_length = [0.85, 0.95]
 
     Cfg.commands.num_bins_vel_x = 21
     Cfg.commands.num_bins_vel_y = 1
@@ -197,14 +205,14 @@ def train_go1(headless=True):
     Cfg.normalization.friction_range = [0, 1]
     Cfg.normalization.ground_friction_range = [0, 1]
     Cfg.terrain.yaw_init_range = 3.14
-    Cfg.normalization.clip_actions = 10.0
+    Cfg.normalization.clip_actions = 50.0
 
     Cfg.commands.exclusive_phase_offset = False
     Cfg.commands.pacing_offset = False
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device='cuda:1', headless=False, cfg=Cfg)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
@@ -219,7 +227,7 @@ def train_go1(headless=True):
 if __name__ == '__main__':
     from pathlib import Path
     from ml_logger import logger
-    from go1_gym import MINI_GYM_ROOT_DIR
+    from b1_gym import MINI_GYM_ROOT_DIR
 
     stem = Path(__file__).stem
     logger.configure(logger.utcnow(f'gait-conditioned-agility/%Y-%m-%d/{stem}/%H%M%S.%f'),
@@ -253,4 +261,4 @@ if __name__ == '__main__':
                 """, filename=".charts.yml", dedent=True)
 
     # to see the environment rendering, set headless=False
-    train_go1(headless=False)
+    train_b1(headless=False)
