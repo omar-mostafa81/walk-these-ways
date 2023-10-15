@@ -1,4 +1,4 @@
-# Go1 Sim-to-Real Locomotion Starter Kit
+# Go1, Go2, and B1 Sim-to-Real Locomotion Starter Kit
 
 
 # Table of contents
