@@ -47,9 +47,9 @@ if __name__ == "__main__":
 
     import ml_logger as logger
 
-    from go1_gym_learn.ppo import Runner
+    from gym_learn.ppo import Runner
     from go1_gym.envs.wrappers.history_wrapper import HistoryWrapper
-    from go1_gym_learn.ppo.actor_critic import AC_Args
+    from gym_learn.ppo.actor_critic import AC_Args
 
     from go1_gym.envs.base.legged_robot_config import Cfg
     from go1_gym.envs.mini_cheetah.mini_cheetah_config import config_mini_cheetah
