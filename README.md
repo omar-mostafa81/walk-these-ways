@@ -20,7 +20,7 @@
 
 ## Overview <a name="overview"></a>
 
-This repository provides an implementation of the paper:
+This repository provides an implementation of the following paper with extended deployment to B1 and Go2 robots:
 
 
 <td style="padding:20px;width:75%;vertical-align:middle">
