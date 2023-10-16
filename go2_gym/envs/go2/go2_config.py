@@ -40,7 +40,7 @@ def config_go2(Cnfg: Union[Cfg, Meta]):
     _.file = '{MINI_GYM_ROOT_DIR}/resources/robots/go2/urdf/go2.urdf'
     _.foot_name = "foot"
     _.penalize_contacts_on = ["thigh", "calf"]
-    _.terminate_after_contacts_on = ["base"]
+    _.terminate_after_contacts_on = ["base", "Head_lower", "Head_upper"]
     _.self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
     _.flip_visual_attachments = True
     _.fix_base_link = False

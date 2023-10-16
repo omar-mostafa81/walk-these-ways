@@ -26,7 +26,7 @@ Stephen Brawner (brawner@gmail.com)
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-        <box size="0.3762 0.0935 0.114"/>
+        <box size="0.3762 0.0935 0.154"/>
       </geometry>
     </collision>
   </link>
