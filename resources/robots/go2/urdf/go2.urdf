@@ -83,18 +83,19 @@ Stephen Brawner (brawner@gmail.com)
         <color rgba="1 1 1 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0.08 0"/>
       <geometry>
         <cylinder length="0.04" radius="0.046"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="FL_hip_joint" type="revolute">
     <origin rpy="0 0 0" xyz="0.1934 0.0465 0"/>
     <parent link="base"/>
     <child link="FL_hip"/>
     <axis xyz="1 0 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-1.0472" upper="1.0472" velocity="30.1"/>
   </joint>
   <link name="FL_thigh">
@@ -124,6 +125,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="FL_hip"/>
     <child link="FL_thigh"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-1.5708" upper="3.4907" velocity="30.1"/>
   </joint>
   <link name="FL_calf">
@@ -153,6 +155,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="FL_thigh"/>
     <child link="FL_calf"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="45.43" lower="-2.7227" upper="-0.83776" velocity="15.70"/>
   </joint>
   <link name="FL_calflower">
@@ -226,18 +229,19 @@ Stephen Brawner (brawner@gmail.com)
         <color rgba="1 1 1 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 -0.08 0"/>
       <geometry>
         <cylinder length="0.04" radius="0.046"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="FR_hip_joint" type="revolute">
     <origin rpy="0 0 0" xyz="0.1934 -0.0465 0"/>
     <parent link="base"/>
     <child link="FR_hip"/>
     <axis xyz="1 0 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-1.0472" upper="1.0472" velocity="30.1"/>
   </joint>
   <link name="FR_thigh">
@@ -267,6 +271,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="FR_hip"/>
     <child link="FR_thigh"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-1.5708" upper="3.4907" velocity="30.1"/>
   </joint>
   <link name="FR_calf">
@@ -296,6 +301,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="FR_thigh"/>
     <child link="FR_calf"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="45.43" lower="-2.7227" upper="-0.83776" velocity="15.70"/>
   </joint>
   <link name="FR_calflower">
@@ -369,18 +375,19 @@ Stephen Brawner (brawner@gmail.com)
         <color rgba="1 1 1 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0.08 0"/>
       <geometry>
         <cylinder length="0.04" radius="0.046"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="RL_hip_joint" type="revolute">
     <origin rpy="0 0 0" xyz="-0.1934 0.0465 0"/>
     <parent link="base"/>
     <child link="RL_hip"/>
     <axis xyz="1 0 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-1.0472" upper="1.0472" velocity="30.1"/>
   </joint>
   <link name="RL_thigh">
@@ -410,6 +417,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="RL_hip"/>
     <child link="RL_thigh"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-0.5236" upper="4.5379" velocity="30.1"/>
   </joint>
   <link name="RL_calf">
@@ -439,6 +447,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="RL_thigh"/>
     <child link="RL_calf"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="45.43" lower="-2.7227" upper="-0.83776" velocity="15.70"/>
   </joint>
   <link name="RL_calflower">
@@ -512,18 +521,19 @@ Stephen Brawner (brawner@gmail.com)
         <color rgba="1 1 1 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 -0.08 0"/>
       <geometry>
         <cylinder length="0.04" radius="0.046"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="RR_hip_joint" type="revolute">
     <origin rpy="0 0 0" xyz="-0.1934 -0.0465 0"/>
     <parent link="base"/>
     <child link="RR_hip"/>
     <axis xyz="1 0 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-1.0472" upper="1.0472" velocity="30.1"/>
   </joint>
   <link name="RR_thigh">
@@ -553,6 +563,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="RR_hip"/>
     <child link="RR_thigh"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="23.7" lower="-0.5236" upper="4.5379" velocity="30.1"/>
   </joint>
   <link name="RR_calf">
@@ -582,6 +593,7 @@ Stephen Brawner (brawner@gmail.com)
     <parent link="RR_thigh"/>
     <child link="RR_calf"/>
     <axis xyz="0 1 0"/>
+    <dynamics damping="0" friction="0"/>
     <limit effort="45.43" lower="-2.7227" upper="-0.83776" velocity="15.70"/>
   </joint>
   <link name="RR_calflower">
