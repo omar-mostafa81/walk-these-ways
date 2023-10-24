@@ -10,32 +10,31 @@ from go1_gym_deploy.utils.command_profile import *
 
 import pathlib
 
-lc = lcm.LCM("udpm://239.255.76.67:7667?ttl=255")
+from B1Py.lcm_types.unitree_lowlevel import UnitreeLowCommand, UnitreeLowState
+from B1Py.lcm_bridges import LCMBridgeClient
 
-def load_and_run_policy(label, experiment_name, max_vel=1.0, max_yaw_vel=1.0):
-    # load agent
-    dirs = glob.glob(f"../../runs/{label}/*")
-    logdir = sorted(dirs)[0]
-
-    with open(logdir+"/parameters.pkl", 'rb') as file:
+def load_and_run_policy(lcm_bridge, label, experiment_name, max_vel=1.0, max_yaw_vel=1.0):
+    # # load agent
+    # dirs = glob.glob(f"../../runs/{label}/*")
+    # logdir = sorted(dirs)[0]
+    # breakpoint()
+    with open(label+"/parameters.pkl", 'rb') as file:
         pkl_cfg = pkl.load(file)
         print(pkl_cfg.keys())
         cfg = pkl_cfg["Cfg"]
         print(cfg.keys())
 
+    se = StateEstimator(lcm_bridge)
 
-    se = StateEstimator(lc)
-
-    control_dt = 0.02
+    control_dt = 1/50
     command_profile = RCControllerProfile(dt=control_dt, state_estimator=se, x_scale=max_vel, y_scale=0.6, yaw_scale=max_yaw_vel)
 
-    hardware_agent = LCMAgent(cfg, se, command_profile)
-    se.spin()
+    hardware_agent = LCMAgent(lcm_bridge, cfg, se, command_profile)
+    # se.spin()
 
     from go1_gym_deploy.envs.history_wrapper import HistoryWrapper
     hardware_agent = HistoryWrapper(hardware_agent)
-
-    policy = load_policy(logdir)
+    policy = load_policy(label)
 
     # load runner
     root = f"{pathlib.Path(__file__).parent.resolve()}/../../logs/"
@@ -45,7 +44,6 @@ def load_and_run_policy(label, experiment_name, max_vel=1.0, max_yaw_vel=1.0):
     deployment_runner.add_control_agent(hardware_agent, "hardware_closed_loop")
     deployment_runner.add_policy(policy)
     deployment_runner.add_command_profile(command_profile)
-
     if len(sys.argv) >= 2:
         max_steps = int(sys.argv[1])
     else:
@@ -70,8 +68,7 @@ def load_policy(logdir):
 
 
 if __name__ == '__main__':
-    label = "gait-conditioned-agility/pretrain-v0/train"
-
+    label = "../checkpoints/B1"
+    lcm_bridge = LCMBridgeClient(robot_name='b1')
     experiment_name = "example_experiment"
-
-    load_and_run_policy(label, experiment_name=experiment_name, max_vel=3.5, max_yaw_vel=5.0)
+    load_and_run_policy(lcm_bridge, label, experiment_name=experiment_name, max_vel=3.5, max_yaw_vel=5.0)
