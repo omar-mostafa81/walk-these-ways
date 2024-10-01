@@ -1,0 +1,448 @@
+name: VelocityTrackingEasyEnv
+
+physics_engine: "physx"
+
+env:
+  num_envs: 4000
+  num_observations: 70  # Updated
+  num_scalar_observations: 70  # Updated
+  num_privileged_obs: 2  # Updated
+  privileged_future_horizon: 1
+  num_actions: 12
+  num_observation_history: 30  # Updated
+  env_spacing: 3.0  # not used with heightfields/trimeshes
+  send_timeouts: True  # send time out information to the algorithm
+  episode_length_s: 20  # episode length in seconds
+  observe_vel: False
+  observe_only_ang_vel: False
+  observe_only_lin_vel: False
+  observe_yaw: False  # Updated
+  observe_contact_states: False
+  observe_command: True
+  observe_height_command: False
+  observe_gait_commands: True  # Updated
+  observe_timing_parameter: False
+  observe_clock_inputs: True  # Updated
+  observe_two_prev_actions: True  # Updated
+  observe_imu: False
+  record_video: False
+  recording_width_px: 360
+  recording_height_px: 240
+  recording_mode: "COLOR"
+  num_recording_envs: 1
+  debug_viz: False
+  all_agents_share: False
+
+  priv_observe_friction: True
+  priv_observe_friction_indep: False  # Updated
+  priv_observe_ground_friction: False
+  priv_observe_ground_friction_per_foot: False
+  priv_observe_restitution: True
+  priv_observe_base_mass: False  # Updated
+  priv_observe_com_displacement: False  # Updated
+  priv_observe_motor_strength: False
+  priv_observe_motor_offset: False
+  priv_observe_joint_friction: True
+  priv_observe_Kp_factor: False  # Updated
+  priv_observe_Kd_factor: False  # Updated
+  priv_observe_contact_forces: False
+  priv_observe_contact_states: False
+  priv_observe_body_velocity: False
+  priv_observe_foot_height: False
+  priv_observe_body_height: False
+  priv_observe_gravity: False  # Updated
+  priv_observe_terrain_type: False
+  priv_observe_clock_inputs: False
+  priv_observe_doubletime_clock_inputs: False
+  priv_observe_halftime_clock_inputs: False
+  priv_observe_desired_contact_states: False
+  priv_observe_dummy_variable: False
+  priv_observe_motion: False  # Added
+  priv_observe_gravity_transformed_motion: False  # Added
+  priv_observe_foot_displacement: False  # Added
+  priv_observe_gravity_transformed_foot_displacement: False  # Added
+
+terrain:
+  mesh_type: 'plane' # 'trimesh'  # Modified
+  horizontal_scale: 0.10  # Updated
+  vertical_scale: 0.005  # [m]
+  border_size: 0.0  # Updated
+  curriculum: False  # Modified
+  static_friction: 1.0
+  dynamic_friction: 1.0
+  restitution: 0.5  # Modified
+  terrain_noise_magnitude: 0.0  # Modified
+  terrain_smoothness: 0.005
+  measure_heights: False  # Modified
+  measured_points_x: [-0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+  measured_points_y: [-0.5, -0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+  selected: False
+  terrain_kwargs: null  # Dict of arguments for selected terrain
+  min_init_terrain_level: 0
+  max_init_terrain_level: 5  # starting curriculum state
+  terrain_length: 5.0  # Updated
+  terrain_width: 5.0  # Updated
+  num_rows: 30  # Updated
+  num_cols: 30  # Updated
+  terrain_proportions: [0, 0, 0, 0, 0, 0, 0, 0, 1.0]  # Modified
+  slope_treshold: 0.75  # slopes above this threshold will be corrected to vertical surfaces
+  difficulty_scale: 1.0
+  x_init_range: 0.2  # Updated
+  y_init_range: 0.2  # Updated
+  yaw_init_range: 3.14  # Updated
+  x_init_offset: 0.0
+  y_init_offset: 0.0
+  teleport_robots: False  # Updated
+  teleport_thresh: 0.3  # Updated
+  max_platform_height: 0.2
+  center_robots: True  # Updated
+  center_span: 4  # Updated
+
+commands:
+  command_curriculum: True  # Modified
+  max_reverse_curriculum: 1.0
+  max_forward_curriculum: 1.0
+  yaw_command_curriculum: False
+  max_yaw_curriculum: 1.0
+  exclusive_command_sampling: False
+  num_commands: 15  # Updated
+  resampling_time: 10  # Updated
+  subsample_gait: False
+  gait_interval_s: 10.0  # time between resampling gait params
+  vel_interval_s: 10.0
+  jump_interval_s: 20.0  # time between jumps
+  jump_duration_s: 0.1  # duration of jump
+  jump_height: 0.3
+  heading_command: False  # Modified
+  global_reference: False
+  observe_accel: False
+  distributional_commands: True  # Updated
+  curriculum_type: "RewardThresholdCurriculum"
+  lipschitz_threshold: 0.9
+
+  num_lin_vel_bins: 21  # Updated
+  lin_vel_step: 0.3
+  num_ang_vel_bins: 21  # Updated
+  ang_vel_step: 0.3
+  distribution_update_extension_distance: 1
+  curriculum_seed: 100
+
+  lin_vel_x: [-1.0, 1.0]  # Updated
+  lin_vel_y: [-0.6, 0.6]  # Updated
+  ang_vel_yaw: [-1.0, 1.0]  # Updated
+  body_height_cmd: [-0.25, 0.15]  # Updated
+  impulse_height_commands: False
+
+  limit_vel_x: [-5.0, 5.0]  # Updated
+  limit_vel_y: [-0.6, 0.6]  # Updated
+  limit_vel_yaw: [-5.0, 5.0]  # Updated
+  limit_body_height: [-0.25, 0.15]  # Updated
+  limit_gait_phase: [0.0, 1.0]  # Updated
+  limit_gait_offset: [0.0, 1.0]  # Updated
+  limit_gait_bound: [0.0, 1.0]  # Updated
+  limit_gait_frequency: [2.0, 4.0]  # Updated
+  limit_gait_duration: [0.5, 0.5]  # Updated
+  limit_footswing_height: [0.03, 0.35]  # Updated
+  limit_body_pitch: [-0.4, 0.4]  # Updated
+  limit_body_roll: [-0.0, 0.0]  # Updated
+  limit_aux_reward_coef: [0.0, 0.01]
+  limit_compliance: [0.0, 0.01]
+  limit_stance_width: [0.10, 0.45]  # Updated
+  limit_stance_length: [0.35, 0.45]  # Updated
+
+  num_bins_vel_x: 21  # Updated
+  num_bins_vel_y: 1  # Updated
+  num_bins_vel_yaw: 21  # Updated
+  num_bins_body_height: 1  # Updated
+  num_bins_gait_frequency: 1  # Updated
+  num_bins_gait_phase: 1  # Updated
+  num_bins_gait_offset: 1  # Updated
+  num_bins_gait_bound: 1  # Updated
+  num_bins_gait_duration: 1  # Updated
+  num_bins_footswing_height: 1  # Updated
+  num_bins_body_pitch: 1  # Updated
+  num_bins_body_roll: 1  # Updated
+  num_bins_aux_reward_coef: 1
+  num_bins_compliance: 1
+  num_bins_stance_width: 1  # Updated
+  num_bins_stance_length: 1  # Updated
+
+  heading: [-3.14, 3.14]
+
+  gait_phase_cmd_range: [0.0, 1.0]  # Updated
+  gait_offset_cmd_range: [0.0, 1.0]  # Updated
+  gait_bound_cmd_range: [0.0, 1.0]  # Updated
+  gait_frequency_cmd_range: [2.0, 4.0]  # Updated
+  gait_duration_cmd_range: [0.5, 0.5]  # Updated
+  footswing_height_range: [0.03, 0.35]  # Updated
+  body_pitch_range: [-0.4, 0.4]  # Updated
+  body_roll_range: [-0.0, 0.0]  # Updated
+  aux_reward_coef_range: [0.0, 0.01]
+  compliance_range: [0.0, 0.01]
+  stance_width_range: [0.10, 0.45]  # Updated
+  stance_length_range: [0.35, 0.45]  # Updated
+
+  exclusive_phase_offset: False  # Updated
+  binary_phases: True  # Updated
+  pacing_offset: False  # Updated
+  balance_gait_distribution: True
+  gaitwise_curricula: True  # Updated
+
+curriculum_thresholds:
+  tracking_lin_vel: 0.8  # Updated
+  tracking_ang_vel: 0.7  # Updated
+  tracking_contacts_shaped_force: 0.90  # Updated
+  tracking_contacts_shaped_vel: 0.90  # Updated
+
+init_state:
+  pos: [0.0, 0.0, 0.34]  # Modified
+  rot: [0.0, 0.0, 0.0, 1.0]  # x, y, z, w [quat]
+  lin_vel: [0.0, 0.0, 0.0]  # x, y, z [m/s]
+  ang_vel: [0.0, 0.0, 0.0]  # x, y, z [rad/s]
+  default_joint_angles:  # Modified
+    FL_hip_joint: 0.1
+    RL_hip_joint: 0.1
+    FR_hip_joint: -0.1
+    RR_hip_joint: -0.1
+    FL_thigh_joint: 0.8
+    RL_thigh_joint: 1.0
+    FR_thigh_joint: 0.8
+    RR_thigh_joint: 1.0
+    FL_calf_joint: -1.5
+    RL_calf_joint: -1.5
+    FR_calf_joint: -1.5
+    RR_calf_joint: -1.5
+
+control:
+  control_type: 'P'  # Modified
+  stiffness:  # Modified
+    joint: 20.0
+  damping:  # Modified
+    joint: 0.5
+  action_scale: 0.25  # Modified
+  hip_scale_reduction: 0.5  # Modified
+  decimation: 4
+
+asset:
+  file: '{MINI_GYM_ROOT_DIR}/resources/robots/go2/urdf/go2.urdf'  # Modified
+  foot_name: "foot"  # Modified
+  penalize_contacts_on: ["thigh", "calf"]  # Modified
+  terminate_after_contacts_on: ["base", "Head_lower", "Head_upper"]  # Modified
+  disable_gravity: False
+  collapse_fixed_joints: True
+  fix_base_link: False  # Modified
+  default_dof_drive_mode: 3  # see GymDofDriveModeFlags
+  self_collisions: 0
+  replace_cylinder_with_capsule: True
+  flip_visual_attachments: True  # Modified
+  density: 0.001
+  angular_damping: 0.0
+  linear_damping: 0.0
+  max_angular_velocity: 1000.0
+  max_linear_velocity: 1000.0
+  armature: 0.0
+  thickness: 0.01
+
+domain_rand:
+  rand_interval_s: 4  # Updated
+  randomize_rigids_after_start: False  # Updated
+  randomize_friction: True  # Modified
+  randomize_friction_indep: False  # Updated
+  friction_range: [0.1, 3.0]  # Updated
+  randomize_restitution: True  # Modified
+  restitution_range: [0.0, 0.4]  # Updated
+  randomize_base_mass: True  # Modified
+  added_mass_range: [-1.0, 3.0]  # Modified
+  randomize_com_displacement: False  # Updated
+  com_displacement_range: [-0.15, 0.15]  # Updated
+  randomize_motor_strength: True  # Modified
+  motor_strength_range: [0.9, 1.1]  # Modified
+  randomize_motor_offset: True  # Updated
+  motor_offset_range: [-0.02, 0.02]  # Updated
+  randomize_Kp_factor: False  # Updated
+  Kp_factor_range: [0.8, 1.3]
+  randomize_Kd_factor: False  # Updated
+  Kd_factor_range: [0.5, 1.5]
+  gravity_rand_interval_s: 8.0  # Updated
+  gravity_impulse_duration: 0.99  # Updated
+  randomize_gravity: True  # Updated
+  gravity_range: [-1.0, 1.0]  # Updated
+  push_robots: False  # Modified
+  push_interval_s: 15
+  max_push_vel_xy: 0.5  # Modified
+  randomize_lag_timesteps: True  # Updated
+  lag_timesteps: 6  # Updated
+  randomize_ground_friction: True  # Updated
+  ground_friction_range: [0.0, 0.0]  # Updated
+
+rewards:
+  only_positive_rewards: False  # Updated
+  only_positive_rewards_ji22_style: True  # Updated
+  sigma_rew_neg: 0.02  # Updated
+  reward_container_name: "CoRLRewards"
+  tracking_sigma: 0.25  # tracking reward = exp(-error^2/sigma)
+  tracking_sigma_lat: 0.25
+  tracking_sigma_long: 0.25
+  tracking_sigma_yaw: 0.25
+  soft_dof_pos_limit: 0.9  # Modified
+  soft_dof_vel_limit: 1.0
+  soft_torque_limit: 1.0
+  base_height_target: 0.30  # Updated
+  max_contact_force: 100.0  # forces above this value are penalized
+  use_terminal_body_height: True  # Updated
+  terminal_body_height: 0.05  # Updated
+  use_terminal_foot_height: False  # Updated
+  terminal_foot_height: -0.005
+  use_terminal_roll_pitch: True  # Updated
+  terminal_body_ori: 1.6  # Updated
+  kappa_gait_probs: 0.07
+  gait_force_sigma: 100.0  # Updated
+  gait_vel_sigma: 10.0  # Updated
+  footswing_height: 0.09
+
+reward_scales:
+  termination: -0.0
+  tracking_lin_vel: 1.0
+  tracking_ang_vel: 0.5
+  lin_vel_z: -0.02  # Updated
+  ang_vel_xy: -0.001  # Updated
+  orientation: 0.0  # Updated
+  orientation_control: -5.0  # Added
+  torques: -0.0001  # Modified
+  dof_vel: -1e-4  # Updated
+  dof_acc: -2.5e-7
+  base_height: 0.0  # Updated
+  feet_air_time: 0.0  # Updated
+  collision: -5.0  # Updated
+  feet_stumble: -0.0
+  action_rate: -0.01  # Modified
+  stand_still: -0.0
+  tracking_lin_vel_lat: 0.0
+  tracking_lin_vel_long: 0.0
+  tracking_contacts: 0.0
+  tracking_contacts_shaped: 0.0
+  tracking_contacts_shaped_force: 4.0  # Updated
+  tracking_contacts_shaped_vel: 4.0  # Updated
+  jump: 10.0  # Updated
+  energy: 0.0
+  energy_expenditure: 0.0
+  survival: 0.0
+  dof_pos_limits: -10.0  # Modified
+  feet_contact_forces: 0.0  # Updated
+  feet_slip: -0.04  # Updated
+  feet_clearance_cmd_linear: -30.0  # Updated
+  dof_pos: -0.0  # Updated
+  action_smoothness_1: -0.1  # Updated
+  action_smoothness_2: -0.1  # Updated
+  base_motion: 0.0
+  feet_impact_vel: -0.0  # Updated
+  raibert_heuristic: -10.0  # Updated
+  estimation_bonus: 0.0  # Added
+  feet_clearance: -0.0  # Added
+  feet_clearance_cmd: -0.0  # Added
+  tracking_stance_width: -0.0  # Added
+  tracking_stance_length: -0.0  # Added
+  hop_symmetry: 0.0  # Added
+
+normalization:
+  clip_observations: 100.0
+  clip_actions: 10.0  # Updated
+
+  friction_range: [0, 1]  # Updated
+  ground_friction_range: [0, 1]  # Updated
+  restitution_range: [0.0, 1.0]
+  added_mass_range: [-1.0, 3.0]
+  com_displacement_range: [-0.1, 0.1]
+  motor_strength_range: [0.9, 1.1]
+  motor_offset_range: [-0.05, 0.05]
+  Kp_factor_range: [0.8, 1.3]
+  Kd_factor_range: [0.5, 1.5]
+  joint_friction_range: [0.0, 0.7]
+  contact_force_range: [0.0, 50.0]
+  contact_state_range: [0.0, 1.0]
+  body_velocity_range: [-6.0, 6.0]
+  foot_height_range: [0.0, 0.15]
+  body_height_range: [0.0, 0.60]
+  gravity_range: [-1.0, 1.0]
+  motion: [-0.01, 0.01]
+
+obs_scales:
+  lin_vel: 2.0
+  ang_vel: 0.25
+  dof_pos: 1.0
+  dof_vel: 0.05
+  imu: 0.1
+  height_measurements: 5.0
+  friction_measurements: 1.0
+  body_height_cmd: 2.0
+  gait_phase_cmd: 1.0
+  gait_freq_cmd: 1.0
+  footswing_height_cmd: 0.15
+  body_pitch_cmd: 0.3
+  body_roll_cmd: 0.3
+  aux_reward_cmd: 1.0
+  compliance_cmd: 1.0
+  stance_width_cmd: 1.0
+  stance_length_cmd: 1.0
+  segmentation_image: 1.0
+  rgb_image: 1.0
+  depth_image: 1.0
+
+noise:
+  add_noise: True
+  noise_level: 1.0  # scales other values
+
+noise_scales:
+  dof_pos: 0.01
+  dof_vel: 1.5
+  lin_vel: 0.1
+  ang_vel: 0.2
+  imu: 0.1
+  gravity: 0.05
+  contact_states: 0.05
+  height_measurements: 0.1
+  friction_measurements: 0.0
+  segmentation_image: 0.0
+  rgb_image: 0.0
+  depth_image: 0.0
+
+viewer:
+  ref_env: 0
+  pos: [10, 0, 6]  # [m]
+  lookat: [11.0, 5.0, 3.0]  # [m]
+
+sim:
+  dt: 0.005
+  substeps: 1
+  gravity: [0.0, 0.0, -9.81]  # [m/s^2]
+  up_axis: 1  # 0 is y, 1 is z
+  use_gpu_pipeline: True
+
+#  physx:
+#    num_threads: 10
+#    solver_type: 1  # 0: pgs, 1: tgs
+#    num_position_iterations: 4
+#    num_velocity_iterations: 0
+#    contact_offset: 0.01  # [m]
+#    rest_offset: 0.0  # [m]
+#    bounce_threshold_velocity: 0.5  # [m/s]
+#    max_depenetration_velocity: 1.0
+#    max_gpu_contact_pairs: 8388608  # 2^23
+#    default_buffer_size_multiplier: 5
+#    contact_collection: 2  # 0: never, 1: last sub-step, 2: all sub-steps
+
+  physx:
+    num_threads: ${....num_threads}
+    solver_type: 0 # ${....solver_type}
+    use_gpu: ${contains:"cuda",${....sim_device}} # set to False to run on CPU
+    num_position_iterations: 4
+    num_velocity_iterations: 1
+    contact_offset: 0.02
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 100.0
+    default_buffer_size_multiplier: 5.0
+    max_gpu_contact_pairs: 33554432 # 8388608 = 8*1024*1024
+    num_subscenes: ${....num_subscenes}
+    contact_collection: 1 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (broken - do not use!)
+
