@@ -132,6 +132,7 @@ env:
     constraints_CaT:
       survivalBonus: 0.0
       feetAirTimeConstraint: 0.25
+      feetMaxAirTimeConstraint: 0.25
       tauConstraint: 0.95
       minPConstraint: 0.0
       softPConstraint: 0.25

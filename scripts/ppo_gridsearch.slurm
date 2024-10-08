@@ -11,8 +11,8 @@
 #SBATCH --array=1-14
 
 declare -A hyperparameters=(
-    ["task.env.learn.limits.action_rate"]="150 150 140 140 140 130 130 130 120 120 120 100 100 100"
-    ["task.env.learn.limits.foot_contact_force"]="120 140 100 120 140 100 120 140 100 120 140 100 120 140"
+    ["task.env.learn.constraints_CaT.feetAirTimeConstraint"]="15 15 15 15 15 20 20 20 20 25 25 25 30 30"
+    ["task.env.learn.constraints_CaT.feetMaxAirTimeConstraint"]="15 20 25 30 35 20 25 30 35 25 30 35 30 35"
 )
 
 hyperparam_args=""

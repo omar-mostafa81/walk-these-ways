@@ -78,6 +78,7 @@ class Go2Terrain(VecTask):
             self.constraints = {}
             self.constraints["survival_bonus"] = self.cfg["env"]["learn"]["constraints_CaT"]["survivalBonus"]
             self.constraints["air_time"] = self.cfg["env"]["learn"]["constraints_CaT"]["feetAirTimeConstraint"]
+            self.constraints["max_air_time"] = self.cfg["env"]["learn"]["constraints_CaT"]["feetMaxAirTimeConstraint"]
             self.constraints["soft_p"] = self.cfg["env"]["learn"]["constraints_CaT"]["softPConstraint"]
             self.constraints["useSoftPCurriculum"] = self.cfg["env"]["learn"]["constraints_CaT"]["useSoftPCurriculum"]
             self.constraints["curriculum"] = 0.0
@@ -1002,6 +1003,7 @@ class Go2Terrain(VecTask):
 
         # Air time constraint (style constraint)
         cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
+        cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
 
         # Constraint to stand still when the velocity command is 0 (style constraint)
         cstr_nomove = (torch.abs(self.dof_vel) - 4.0) *(torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
@@ -1053,7 +1055,7 @@ class Go2Terrain(VecTask):
         self.cstr_manager.add("joint_vel",  cstr_joint_vel, max_p=soft_p)
         self.cstr_manager.add("base_height_max", cstr_base_height_max, max_p=soft_p)
         self.cstr_manager.add("action_rate", cstr_action_rate, max_p=soft_p)
-        self.cstr_manager.add("foot_contact_rate", cstr_foot_contact_rate, max_p=soft_p)
+        ##self.cstr_manager.add("foot_contact_rate", cstr_foot_contact_rate, max_p=soft_p)
         #self.cstr_manager.add("late_curriculum_foot_contact", cstr_curriculum_foot_contact, max_p=soft_p_2)
 
         # Hard constraints
@@ -1068,6 +1070,7 @@ class Go2Terrain(VecTask):
         self.cstr_manager.add("HAA", cstr_HAA, max_p=soft_p)
         self.cstr_manager.add("base_ori", cstr_base_orientation, max_p=soft_p)
         self.cstr_manager.add("air_time", cstr_air_time, max_p=soft_p)
+        self.cstr_manager.add("max_air_time", cstr_max_air_time, max_p=soft_p)
         self.cstr_manager.add("no_move", cstr_nomove)
         self.cstr_manager.add("2footcontact", cstr_2footcontact, max_p=soft_p)
         #self.cstr_manager.add("foot_contact_vertical", cstr_foot_contact_vertical, max_p=soft_p)
