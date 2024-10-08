@@ -202,8 +202,10 @@ class Go2Terrain(VecTask):
         self.dof_pos = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
+        self.last_contact_forces = self.contact_forces.clone()
         self.rigid_body_state = gymtorch.wrap_tensor(rigid_body_state)
         self.force_sensor = gymtorch.wrap_tensor(force_sensor_tensor)
+        self.last_joint_acc = None
 
         # Taking only the [0:3] components breaks the automatic update like for previous tensors
         self.foot_positions = self.rigid_body_state.view(self.num_envs, self.num_bodies, 13)[:, self.feet_indices, 0:3]
@@ -445,10 +447,10 @@ class Go2Terrain(VecTask):
         self.base_index = self.gym.find_actor_rigid_body_handle(self.envs[0], self.solo_handles[0], self.cfg["env"]["urdfAsset"]["baseName"])
         for i in range(len(knee_names)):
             self.knee_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.solo_handles[0], knee_names[i])
-        if not self.cfg["env"]["urdfAsset"]["collapseFixedJoints"]:
-            # If collapseFixedJoints is True, then the feet are collapsed into the shin and "shin + feet" become feet
-            for i in range(len(shin_names)):
-                self.shin_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.solo_handles[0], shin_names[i])
+        ##if not self.cfg["env"]["urdfAsset"]["collapseFixedJoints"]:
+        # If collapseFixedJoints is True, then the feet are collapsed into the shin and "shin + feet" become feet
+        for i in range(len(shin_names)):
+            self.shin_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.solo_handles[0], shin_names[i])
         for i in range(len(feet_names)):
             self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.solo_handles[0], feet_names[i])
 
@@ -749,16 +751,16 @@ class Go2Terrain(VecTask):
             camera_handle = self.gym.create_camera_sensor(env_handle, camera_props)
             assert camera_handle != -1, "The camera failed to be created"
             self.cam_handles.append(camera_handle)
-            
+
             local_transform = gymapi.Transform()
-            
+
             camera_position = np.copy(self.cfg["env"]["depth"]["position"])
             camera_angle = np.random.uniform(self.cfg["env"]["depth"]["angle"][0], self.cfg["env"]["depth"]["angle"][1])
 
             local_transform.p = gymapi.Vec3(*camera_position)
             local_transform.r = gymapi.Quat.from_euler_zyx(0, np.radians(camera_angle), 0)
             root_handle = self.gym.get_actor_root_rigid_body_handle(env_handle, actor_handle)
-            
+
             self.gym.attach_camera_to_body(camera_handle, env_handle, root_handle, local_transform, gymapi.FOLLOW_TRANSFORM)
 
     def update_depth_buffer(self):
@@ -941,7 +943,13 @@ class Go2Terrain(VecTask):
         cstr_dof_pos_upper = self.dof_pos - self.dof_pos_limits[:, 1]
 
         # Joint acceleration constraint
-        cstr_joint_acc = torch.abs(self.last_dof_vel[:, :, 0] - self.dof_vel) / self.dt - self.limits["acc"]
+        joint_acc = torch.abs(self.last_dof_vel[:, :, 0] - self.dof_vel) / self.dt
+        cstr_joint_acc = joint_acc - self.limits["acc"]
+        if self.last_joint_acc is None:
+            self.last_joint_acc = torch.zeros_like(joint_acc)
+        joint_jerk = torch.abs(joint_acc - self.last_joint_acc) / self.dt
+        self.last_joint_acc = joint_acc.clone()
+        cstr_joint_jerk = joint_jerk - self.limits["jerk"]
 
         # Base height constraints
         if self.cfg["env"]["terrain"]["terrainType"] == 'plane':
@@ -957,14 +965,19 @@ class Go2Terrain(VecTask):
         # ------------ Hard constraints ----------------
 
         # Knee contact constraint
-        #cstr_knee_contact = torch.any(torch.norm(self.contact_forces[:, self.knee_indices, :], dim=2) > 1.0, dim=1)
+        cstr_knee_contact = torch.any(torch.norm(self.contact_forces[:, self.knee_indices, :], dim=2) > 1.0, dim=1)
+        cstr_thigh_contact = torch.any(torch.norm(self.contact_forces[:, self.shin_indices, :], dim=2) > 1.0, dim=1)
 
         # Base contact constraint
         #cstr_base_contact = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1.0
 
         # Foot contact force constraint
         cstr_foot_contact = torch.norm(self.contact_forces[:, self.grf_indices], dim=2) - self.limits["foot_contact_force"]
+        cstr_curriculum_foot_contact = torch.norm(self.contact_forces[:, self.grf_indices], dim=2) - 80
         cstr_foot_contact_vertical = torch.abs(self.contact_forces[:, self.grf_indices, 2]) - self.limits["foot_contact_vertical_force"]
+        #cstr_foot_contact_rate = torch.norm(self.contact_forces[:, self.grf_indices] - self.last_contact_forces[:, self.grf_indices], dim=2) - self.limits["foot_contact_force_rate"]
+        cstr_foot_contact_rate = torch.abs(torch.norm(self.contact_forces[:, self.grf_indices], dim=2) - torch.norm(self.last_contact_forces[:, self.grf_indices], dim=2)) - self.limits["foot_contact_force_rate"]
+        self.last_contact_forces = self.contact_forces.clone()
 
         # Contacts causing early stopping
         cstr_termination_contacts = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
@@ -992,6 +1005,7 @@ class Go2Terrain(VecTask):
 
         # Constraint to stand still when the velocity command is 0 (style constraint)
         cstr_nomove = (torch.abs(self.dof_vel) - 4.0) *(torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
+        ##cstr_nomove = (torch.abs(self.dof_pos - self.default_dof_pos)) * (torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone).float().unsqueeze(1)
 
         # Constraint to have exactly 2 feet in contact with the ground at any time when walking (style constraint)
         cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2) * (torch.norm(self.commands[:, :3], dim=1) > 0.5).float()
@@ -1006,7 +1020,7 @@ class Go2Terrain(VecTask):
         # ------------ Tracking constraints ----------------
 
         # Velocity tracking constraints
-        cstr_lin_vel = torch.norm(self.commands[:, :2] - self.base_lin_vel[:, :2], dim=1) - self.constraints["tracking"] 
+        cstr_lin_vel = torch.norm(self.commands[:, :2] - self.base_lin_vel[:, :2], dim=1) - self.constraints["tracking"]
         cstr_ang_vel = torch.abs(self.commands[:, 2] - self.base_ang_vel[:, 2]) - self.constraints["tracking"]
 
         # ------------ Applying constraints ----------------
@@ -1026,17 +1040,25 @@ class Go2Terrain(VecTask):
             T_end = 1 / soft_p
             soft_p = 1 / (T_start + self.constraints["curriculum"] * (T_end - T_start))
 
+        if self.constraints["useSoftPCurriculum"]:
+            self.constraints["late_curriculum"] = max((self.common_step_counter - 600 * self.cfg["horizon_length"]) / ((self.cfg["max_epochs"] - 600) * self.cfg["horizon_length"]), 0)
+            soft_p_2 = self.constraints["late_curriculum"] * self.constraints["soft_p"]
+
         # Soft constraints
         self.cstr_manager.add("dof_pos_lower", cstr_dof_pos_lower, max_p=soft_p)
         self.cstr_manager.add("dof_pos_upper", cstr_dof_pos_upper, max_p=soft_p)
         self.cstr_manager.add("torque", cstr_torque, max_p=soft_p)
-        ##self.cstr_manager.add("joint_acc", cstr_joint_acc, max_p=soft_p)
+        #self.cstr_manager.add("joint_jerk", cstr_joint_jerk, max_p=soft_p)
+        #self.cstr_manager.add("joint_acc", cstr_joint_acc, max_p=soft_p)
         self.cstr_manager.add("joint_vel",  cstr_joint_vel, max_p=soft_p)
         self.cstr_manager.add("base_height_max", cstr_base_height_max, max_p=soft_p)
         self.cstr_manager.add("action_rate", cstr_action_rate, max_p=soft_p)
+        self.cstr_manager.add("foot_contact_rate", cstr_foot_contact_rate, max_p=soft_p)
+        #self.cstr_manager.add("late_curriculum_foot_contact", cstr_curriculum_foot_contact, max_p=soft_p_2)
 
         # Hard constraints
-        #self.cstr_manager.add("knee_contact", cstr_knee_contact, max_p=1.0)
+        self.cstr_manager.add("knee_contact", cstr_knee_contact, max_p=1.0)
+        self.cstr_manager.add("thigh_contact", cstr_thigh_contact, max_p=1.0)
         #self.cstr_manager.add("base_contact", cstr_base_contact, max_p=1.0)
         self.cstr_manager.add("foot_contact", cstr_foot_contact, max_p=1.0)
         self.cstr_manager.add("HFE", cstr_HFE, max_p=1.0)
