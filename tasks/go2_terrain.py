@@ -220,6 +220,7 @@ class Go2Terrain(VecTask):
         self.commands = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.lin_vel_scale, self.lin_vel_scale, self.ang_vel_scale], device=self.device, requires_grad=False,)
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
+
         self.forward_vec = to_torch([1., 0., 0.], device=self.device).repeat((self.num_envs, 1))
         self.torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
@@ -678,7 +679,7 @@ class Go2Terrain(VecTask):
         """
         return torch.cat((self.projected_gravity,  # projected gravity, an image of the orientation (t)
                           self.dof_pos * self.dof_pos_scale, # joint positions (t)
-                          ((self.dof_pos - self.last_dof_pos[:, :, 0]) / self.dt) * self.dof_vel_scale, # joint velocities (t)
+                          self.dof_vel * self.dof_vel_scale, # ((self.dof_pos - self.last_dof_pos[:, :, 0]) / self.dt) * self.dof_vel_scale, # joint velocities (t)
                           self.actions, # joint position targets (t - 1)
                          ), dim=-1)
 
@@ -1002,15 +1003,22 @@ class Go2Terrain(VecTask):
         cstr_base_orientation = torch.norm(self.projected_gravity[:, :2], dim=1) - self.limits["base_orientation"]
 
         # Air time constraint (style constraint)
-        cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
-        cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
+        ##cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
+        ##cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
+        cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown
+        cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown
 
         # Constraint to stand still when the velocity command is 0 (style constraint)
-        cstr_nomove = (torch.abs(self.dof_vel) - 4.0) *(torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
-        ##cstr_nomove = (torch.abs(self.dof_pos - self.default_dof_pos)) * (torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone).float().unsqueeze(1)
+        ##cstr_nomove = (torch.abs(self.dof_vel) - 4.0) *(torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
+        cstr_nomove = (torch.abs(self.base_lin_vel[:, :2]) - 0.01) * (torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
 
         # Constraint to have exactly 2 feet in contact with the ground at any time when walking (style constraint)
-        cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2) * (torch.norm(self.commands[:, :3], dim=1) > 0.5).float()
+        #cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2) * (torch.norm(self.commands[:, :3], dim=1) > 0.5).float()
+        cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2).float()
+        cstr_diagfootcontact = 1.0 - torch.logical_or(
+            (self.contact_forces[:, self.grf_indices[[0,3]], 2] > 1.0).all(1),
+            (self.contact_forces[:, self.grf_indices[[1,2]], 2] > 1.0).all(1),
+        ).float()
 
         # Apply aesthetics constraints only on flat terrains
         cstr_HAA *= self.is_flat_terrain.unsqueeze(1)
@@ -1055,7 +1063,7 @@ class Go2Terrain(VecTask):
         self.cstr_manager.add("joint_vel",  cstr_joint_vel, max_p=soft_p)
         self.cstr_manager.add("base_height_max", cstr_base_height_max, max_p=soft_p)
         self.cstr_manager.add("action_rate", cstr_action_rate, max_p=soft_p)
-        ##self.cstr_manager.add("foot_contact_rate", cstr_foot_contact_rate, max_p=soft_p)
+        self.cstr_manager.add("foot_contact_rate", cstr_foot_contact_rate, max_p=soft_p)
         #self.cstr_manager.add("late_curriculum_foot_contact", cstr_curriculum_foot_contact, max_p=soft_p_2)
 
         # Hard constraints
@@ -1073,6 +1081,7 @@ class Go2Terrain(VecTask):
         self.cstr_manager.add("max_air_time", cstr_max_air_time, max_p=soft_p)
         self.cstr_manager.add("no_move", cstr_nomove)
         self.cstr_manager.add("2footcontact", cstr_2footcontact, max_p=soft_p)
+        self.cstr_manager.add("diagfootcontact", cstr_diagfootcontact, max_p=soft_p)
         #self.cstr_manager.add("foot_contact_vertical", cstr_foot_contact_vertical, max_p=soft_p)
 
         # Tracking constraints
@@ -1403,7 +1412,7 @@ class Go2Terrain(VecTask):
             self.commands[0, 1] = self.joystick.v_ref[1, 0]
             self.commands[0, 2] = self.joystick.v_ref[-1, 0]
             self.commands[0] *= torch.any(torch.abs(self.commands[0, :3]) > self.vel_deadzone) # set small commands to zero
-        else:
+        elif not self.cfg["env"]["onlyForwards"]:
             # Random velocity command resampling
             no_vel_command = (torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float()
             p_resample_command = 0.01 * no_vel_command + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)

@@ -57,7 +57,7 @@ env:
 
   randomCommandVelocityRanges:
     # train
-    linear_x: [-0.3, 1.0] # min max [m/s]
+    linear_x: [0.0, 0.0] # [-0.3, 1.0] # min max [m/s]
     linear_y: [-0.7, 0.7] # min max [m/s]
     yaw: [-0.78, 0.78] # min max [rad/s]
 
@@ -132,6 +132,7 @@ env:
     constraints_CaT:
       survivalBonus: 0.0
       feetAirTimeConstraint: 0.35
+      feetMaxAirTimeConstraint: 0.25
       tauConstraint: 0.95
       minPConstraint: 0.0
       softPConstraint: 0.25
@@ -190,7 +191,7 @@ env:
 
     # friction randomization
     randomizeFriction: true
-    frictionRange: [0.5, 1.25]
+    frictionRange: [0.05, 4.5] # [0.5, 1.25]
 
     # random pushes during training
     pushRobots: false

@@ -56,9 +56,9 @@ env:
 
   randomCommandVelocityRanges:
     # train
-    linear_x: [-0.3, 1.0] # min max [m/s]
-    linear_y: [-0.7, 0.7] # min max [m/s]
-    yaw: [-0.78, 0.78] # min max [rad/s]
+    linear_x: [-0.6, 0.6] # min max [m/s]
+    linear_y: [-0.6, 0.6] # min max [m/s]
+    yaw: [-1.0, 1.0] # min max [rad/s]
 
   control:
     # PD Drive parameters:
@@ -131,7 +131,7 @@ env:
     enableConstraints: "cat"  # "none", "cat"
     constraints_CaT:
       survivalBonus: 0.0
-      feetAirTimeConstraint: 0.25
+      feetAirTimeConstraint: 0.20
       feetMaxAirTimeConstraint: 0.25
       tauConstraint: 0.95
       minPConstraint: 0.0
@@ -142,7 +142,7 @@ env:
     limits:
       torque: 35.0 # 3.0
       jerk: 8000.0
-      acc: 800.0
+      acc: 300.0
       vel: 16.0
       action_rate: 120.0 # 100
       base_orientation: 0.1
@@ -194,7 +194,7 @@ env:
 
     # friction randomization
     randomizeFriction: true
-    frictionRange: [0.5, 1.25]
+    frictionRange: [0.05, 4.5] # [0.5, 1.25]
 
     # random pushes during training
     pushRobots: true
