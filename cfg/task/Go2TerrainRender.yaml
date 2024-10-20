@@ -62,6 +62,7 @@ env:
     yaw: [-0.78, 0.78] # min max [rad/s]
 
   control:
+    useActuatorNet: false
     # PD Drive parameters:
     stiffness: 20.0 # [N*m/rad]
     damping: 0.5 # [N*m*s/rad]
@@ -121,6 +122,8 @@ env:
     dofVelLimitRewardScale: 0
     footTwoContactRewardScale: 0.0 # 1.0 (as reward)
     hipRewardScale: -0.0
+    raibertHeuristic: 0. # -10.0
+    standStill: 0. # -2.
 
     # Misc quantities for rewards
     linearVelocityXYRewardDelta: 0.25
@@ -153,7 +156,7 @@ env:
 
     # Other
     flatTerrainThreshold: 0.001
-    vel_deadzone: 0.1
+    vel_deadzone: 0.2 # 0.1
     base_height_target: 0.245
     gait_period: 0.4
 
@@ -166,6 +169,8 @@ env:
       heights: false
       phases: false
       imu: false
+      clock_inputs: false
+
     measured_points_step: 0.08
     measured_points_x: [-3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     measured_points_y: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
@@ -191,7 +196,29 @@ env:
 
     # friction randomization
     randomizeFriction: true
-    frictionRange: [0.05, 4.5] # [0.5, 1.25]
+    frictionRange: [0.1, 3.0] # [0.5, 1.25]
+    randomizeMotorFriction: true
+    mu_vRange: [0.0, 0.3] #
+    FsRange: [0.0, 2.5] #
+
+    # base mass randomization
+    randomizeBaseMass: false
+    addedMassRange: [-1., 3.]
+
+    # restitution randomization
+    randomizeRestitution: false
+    restitutionRange: [0.0, 1.0]
+
+    # com randomization
+    randomizeComDisplacement: false
+    comDisplacementRange: [-0.1, 0.1]
+  
+    # Motor strength randomization
+    randomizeMotorStrength: true
+    motorStrengthRange: [0.9, 1.1]
+    # Motor offset randomization
+    randomizeMotorOffset: true
+    motorOffsetRange: [-0.02, 0.02]
 
     # random pushes during training
     pushRobots: false
@@ -199,6 +226,8 @@ env:
 
     # episode length in seconds
     episodeLength_s: 10
+
+
 
   # viewer cam:
   viewer:

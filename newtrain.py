@@ -43,6 +43,7 @@ from isaacgymenvs.utils.utils import set_np_formatting, set_seed
 
 import torch
 from algos.PPO import PPO, eval_PPO
+from algos.PPORNN import PPORNN, eval_PPORNN
 
 @hydra.main(config_name="config", config_path="./cfg")
 def launch_rlg_hydra(cfg: DictConfig):
@@ -87,11 +88,15 @@ def launch_rlg_hydra(cfg: DictConfig):
     if cfg["test"]:
         if algo == "cat_a2c_continuous":
             eval_PPO(cfg, envs)
+        elif algo == "cat_a2c_rnn_continuous":
+            eval_PPORNN(cfg, envs)
         else:
             raise NotImplementedError
     else:
         if algo == "cat_a2c_continuous":
             PPO(cfg, envs)
+        elif algo == "cat_a2c_rnn_continuous":
+            PPORNN(cfg, envs)
         else:
             raise NotImplementedError
 

@@ -67,10 +67,12 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 class Agent(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, envs, rnn_hidden_dim):
         super().__init__()
+        self.actor_memory = nn.GRU(np.array(envs.single_observation_space.shape).prod(), rnn_hidden_dim, batch_first = True)
+        self.critic_memory = nn.GRU(np.array(envs.single_observation_space.shape).prod(), rnn_hidden_dim, batch_first = True)
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 512)),
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod() + rnn_hidden_dim, 512)),
             nn.ELU(),
             layer_init(nn.Linear(512, 256)),
             nn.ELU(),
@@ -79,7 +81,7 @@ class Agent(nn.Module):
             layer_init(nn.Linear(128, 1), std=1.0),
         )
         self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 512)),
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod() + rnn_hidden_dim, 512)),
             nn.ELU(),
             layer_init(nn.Linear(512, 256)),
             nn.ELU(),
@@ -92,56 +94,29 @@ class Agent(nn.Module):
         self.obs_rms = RunningMeanStd(shape = envs.single_observation_space.shape)
         self.value_rms = RunningMeanStd(shape = ())
 
-    def get_value(self, x):
-        return self.critic(x)
+    def get_value(self, x, cr_hidden_in):
+        cr_out, cr_hidden_out = self.critic_memory(x, cr_hidden_in)
+        cr_h = torch.cat([cr_out, x], dim=-1)
+        return self.critic(cr_h)
 
-    def get_action_and_value(self, x, action=None):
-        action_mean = self.actor_mean(x)
+    def get_action_and_value(self, x, ac_hidden_in, cr_hidden_in, action=None):
+        ac_out, ac_hidden_out = self.actor_memory(x, ac_hidden_in)
+        cr_out, cr_hidden_out = self.critic_memory(x, cr_hidden_in)
+        ac_h = torch.cat([ac_out, x], dim=-1)
+        cr_h = torch.cat([cr_out, x], dim=-1)
+        action_mean = self.actor_mean(ac_h)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+        return action, probs.log_prob(action).sum(-1), probs.entropy().sum(-1), self.critic(cr_h), ac_hidden_out, cr_hidden_out
 
 class ExtractObsWrapper(gym.ObservationWrapper):
     def observation(self, obs):
         return obs["obs"]
 
-def monitor(episode_sums, iteration):
-    """
-    Display key-value pairs from episode_sums in a table format.
-
-    Args:
-        episode_sums (dict): A dictionary with elements as keys and tensors as values.
-        iteration (int): The current iteration number.
-    """
-    print(f"============ iter {iteration} ============")
-
-    # Initialize the table
-    table = Texttable()
-    table.set_deco(Texttable.HEADER)
-    table.set_cols_align(["l", "r"])  # Left and right alignment for columns
-    table.set_cols_dtype(['t', 'f'])  # Text and float data types
-
-    # Prepare the header and data rows
-    headers = ["Element", "Mean Value"]
-    rows = []
-
-    # Collect the keys and their mean values
-    keys = list(episode_sums.keys())
-    values = [v.mean().item() for v in episode_sums.values()]
-
-    # Combine headers and data
-    table_data = [headers] + list(zip(keys, values))
-
-    # Add rows to the table
-    table.add_rows(table_data)
-
-    # Print the table
-    print(table.draw())
-
-def PPO(cfg: DictConfig, envs):
+def PPORNN(cfg: DictConfig, envs):
     run_path = f"runs/{cfg['train']['params']['config']['name']}_{datetime.now().strftime('%d-%H-%M-%S')}"
 
     writer = SummaryWriter(run_path)
@@ -162,6 +137,7 @@ def PPO(cfg: DictConfig, envs):
     MAX_GRAD_NORM = cfg["train"]["params"]["config"]["grad_norm"]
     NORM_ADV = cfg["train"]["params"]["config"]["normalize_advantage"]
     CLIP_VLOSS = cfg["train"]["params"]["config"]["clip_value"]
+    RNN_LATENT_DIM = 256
     ANNEAL_LR = True
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -171,9 +147,9 @@ def PPO(cfg: DictConfig, envs):
 
     envs = ExtractObsWrapper(envs)
 
-    BATCH_SIZE = int(envs.num_envs * NUM_STEPS)
+    BATCH_SIZE = int(envs.num_envs)
 
-    agent = Agent(envs).to(device)
+    agent = Agent(envs, RNN_LATENT_DIM).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, eps=1e-5)
 
     obs = torch.zeros((NUM_STEPS, envs.num_envs) + envs.single_observation_space.shape, dtype=torch.float).to(device)
@@ -184,6 +160,8 @@ def PPO(cfg: DictConfig, envs):
     true_dones = torch.zeros((NUM_STEPS, envs.num_envs), dtype=torch.float).to(device)
     values = torch.zeros((NUM_STEPS, envs.num_envs), dtype=torch.float).to(device)
     advantages = torch.zeros_like(rewards, dtype=torch.float).to(device)
+    hiddens_in = torch.zeros((NUM_STEPS + 1, 1, envs.num_envs, RNN_LATENT_DIM), dtype=torch.float32, device=device)
+    cr_hiddens_in = torch.zeros((NUM_STEPS + 1, 1, envs.num_envs, RNN_LATENT_DIM), dtype=torch.float32, device=device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -193,12 +171,16 @@ def PPO(cfg: DictConfig, envs):
     next_done = torch.zeros(envs.num_envs, dtype=torch.float).to(device)
     next_true_done = torch.zeros(envs.num_envs, dtype=torch.float).to(device)
 
+    hidden_in = torch.zeros((1, envs.num_envs, RNN_LATENT_DIM), dtype=torch.float32, device=device)
+    cr_hidden_in = torch.zeros((1, envs.num_envs, RNN_LATENT_DIM), dtype=torch.float32, device=device)
     for iteration in range(1, NUM_ITERATIONS + 1):
         if ANNEAL_LR:
             frac = 1.0 - (iteration - 1.0) / NUM_ITERATIONS
             lrnow = frac * LEARNING_RATE
             optimizer.param_groups[0]["lr"] = lrnow
 
+        hiddens_in[0] = hiddens_in[-1].clone()
+        cr_hiddens_in[0] = cr_hiddens_in[-1].clone()
         for step in range(0, NUM_STEPS):
             global_step += envs.num_envs
             obs[step] = next_obs
@@ -207,20 +189,25 @@ def PPO(cfg: DictConfig, envs):
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                action, logprob, _, value, hidden_out, cr_hidden_out = agent.get_action_and_value(next_obs.unsqueeze(1), hidden_in, cr_hidden_in)
                 values[step] = value.flatten()
-            actions[step] = action
-            logprobs[step] = logprob
+            actions[step] = action.squeeze(1)
+            logprobs[step] = logprob.squeeze(1)
+            hiddens_in[step + 1] = hidden_out.clone()
+            hidden_in = hidden_out.clone()
+            cr_hiddens_in[step + 1] = cr_hidden_out.clone()
+            cr_hidden_in = cr_hidden_out.clone()
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, rewards[step], next_done, info = envs.step(action)
+            next_obs, rewards[step], next_done, info = envs.step(action.squeeze(1))
             next_obs = agent.obs_rms(next_obs)
             next_done = next_done.float()
             next_true_done = info["true_dones"].float()
-            """if "time_outs" in info:
-                if info["time_outs"].any():
-                    print("time outs", info["time_outs"].sum())
-                    exit(0)"""
+
+            if next_true_done.any():
+                true_dones_idx = torch.argwhere(next_true_done).squeeze()
+                hidden_in[:, true_dones_idx] = 0
+                cr_hidden_in[:, true_dones_idx] = 0
 
         for el, v in zip(list(envs.episode_sums.keys())[:envs.numRewards], (torch.mean(envs.rew_mean_reset, dim=0)).tolist()):
             writer.add_scalar(f"reward/{el}", v, iteration)
@@ -231,9 +218,6 @@ def PPO(cfg: DictConfig, envs):
             writer.add_scalar(f"cstr/{el}", v, iteration)
         writer.add_scalar("cstr/curriculum", envs.constraints["curriculum"], iteration)
         writer.add_scalar("cstr/late_curriculum", envs.constraints["late_curriculum"], iteration)
-        #monitor(envs.episode_sums, iteration)
-        #for el, v in envs.episode_sums.items():
-        #    writer.add_scalar(f"reward/{el}", v.mean().item(), iteration)
 
         # CaT: must compute the CaT quantity
         not_dones = 1.0 - dones
@@ -241,7 +225,7 @@ def PPO(cfg: DictConfig, envs):
 
         # bootstrap value if not done
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            next_value = agent.get_value(next_obs.unsqueeze(1), cr_hidden_in).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(NUM_STEPS)):
@@ -258,15 +242,17 @@ def PPO(cfg: DictConfig, envs):
             returns = advantages + values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
+        b_obs = torch.swapaxes(obs, 0, 1)
+        b_logprobs = torch.swapaxes(logprobs, 0, 1)
+        b_actions = torch.swapaxes(actions, 0, 1)
+        b_advantages = torch.swapaxes(advantages, 0, 1)
+        b_returns = torch.swapaxes(returns, 0, 1)
+        b_values = torch.swapaxes(values, 0, 1)
+        b_hiddens_in = hiddens_in[0]
+        b_cr_hiddens_in = cr_hiddens_in[0]
 
-        b_values = agent.value_rms(b_values)
-        b_returns = agent.value_rms(b_returns)
+        b_values = agent.value_rms(b_values.reshape(-1)).view((envs.num_envs, NUM_STEPS))
+        b_returns = agent.value_rms(b_returns.reshape(-1)).view((envs.num_envs, NUM_STEPS))
 
         # Optimizing the policy and value network
         clipfracs = []
@@ -276,7 +262,7 @@ def PPO(cfg: DictConfig, envs):
                 end = start + MINIBATCH_SIZE
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue, _, _ = agent.get_action_and_value(b_obs[mb_inds], b_hiddens_in[:, mb_inds], b_cr_hiddens_in[:, mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -299,17 +285,17 @@ def PPO(cfg: DictConfig, envs):
                 newvalue = newvalue.view(-1)
                 newvalue = agent.value_rms(newvalue, update = False)
                 if CLIP_VLOSS:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds].view(-1)) ** 2
+                    v_clipped = b_values[mb_inds].view(-1) + torch.clamp(
+                        newvalue - b_values[mb_inds].view(-1),
                         -CLIP_COEF,
                         CLIP_COEF,
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds].view(-1)) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds].view(-1)) ** 2).mean()
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - ENT_COEF * entropy_loss + v_loss * VF_COEF
@@ -324,7 +310,8 @@ def PPO(cfg: DictConfig, envs):
             torch.save(agent.state_dict(), model_path)
             print("Saved model")
 
-def eval_PPO(cfg: DictConfig, envs):
+def eval_PPORNN(cfg: DictConfig, envs):
+    RNN_LATENT_DIM = 256
     checkpoint = cfg["checkpoint"]
     actor_sd = torch.load(checkpoint)
 
@@ -335,14 +322,16 @@ def eval_PPO(cfg: DictConfig, envs):
 
     envs = ExtractObsWrapper(envs)
 
-    actor = Agent(envs).to(device)
+    actor = Agent(envs, RNN_LATENT_DIM).to(device)
     actor.load_state_dict(actor_sd)
 
     obs = envs.reset()
+    ac_hidden_in = torch.zeros((1, 1, RNN_LATENT_DIM), dtype=torch.float32, device=device)
+    cr_hidden_in = torch.zeros((1, 1, RNN_LATENT_DIM), dtype=torch.float32, device=device)
 
     for _ in range(2000):
         with torch.no_grad():
-            actions, _, _, _ = actor.get_action_and_value(actor.obs_rms(obs, update = False))
+            actions, _, _, _, ac_hidden_in, _ = actor.get_action_and_value(actor.obs_rms(obs, update = False).unsqueeze(1), ac_hidden_in, cr_hidden_in)
 
-        next_obs, rewards, terminations, infos = envs.step(actions)
+        next_obs, rewards, terminations, infos = envs.step(actions.squeeze(1))
         obs = next_obs

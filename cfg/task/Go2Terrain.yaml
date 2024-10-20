@@ -61,6 +61,7 @@ env:
     yaw: [-1.0, 1.0] # min max [rad/s]
 
   control:
+    useActuatorNet: false
     # PD Drive parameters:
     stiffness: 20.0 # [N*m/rad]
     damping: 0.5 # [N*m*s/rad]
@@ -121,6 +122,8 @@ env:
     dofVelLimitRewardScale: 0
     footTwoContactRewardScale: 0.0 # 1.0 (as reward)
     hipRewardScale: -0.0
+    raibertHeuristic: 0. # -10.0
+    standStill: 0. # -2.
 
     # Misc quantities for rewards
     linearVelocityXYRewardDelta: 0.25
@@ -144,7 +147,7 @@ env:
       jerk: 8000.0
       acc: 300.0
       vel: 16.0
-      action_rate: 120.0 # 100
+      action_rate: 140.0 # 100
       base_orientation: 0.1
       foot_contact_force: 100.0 # 50.0
       foot_contact_vertical_force: 80.0
@@ -156,7 +159,7 @@ env:
 
     # Other
     flatTerrainThreshold: 0.001
-    vel_deadzone: 0.1
+    vel_deadzone: 0.2 # 0.1
     base_height_target: 0.245
     gait_period: 0.4
 
@@ -169,6 +172,8 @@ env:
       heights: false
       phases: false
       imu: false
+      clock_inputs: false
+
     measured_points_step: 0.08
     measured_points_x: [-3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     measured_points_y: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
@@ -186,15 +191,43 @@ env:
     addNoise: true
     noiseLevel: 1.0 # scales other values
     dofPositionNoise: 0.01
-    dofVelocityNoise: 0.2
-    linearVelocityNoise: 0.0
-    angularVelocityNoise: 0.001
+    dofVelocityNoise: 0.2 # 1.5 # 0.2
+    linearVelocityNoise: 0.0 # 0.1 # 0.0
+    angularVelocityNoise: 0.001 # 0.2 # 0.001
     gravityNoise: 0.05
     heightMeasurementNoise: 0.01
 
     # friction randomization
     randomizeFriction: true
-    frictionRange: [0.05, 4.5] # [0.5, 1.25]
+    frictionRange: [0.1, 3.0] #
+    randomizeMotorFriction: true
+    mu_vRange: [0.0, 0.3] #
+    FsRange: [0.0, 2.5] #
+
+    # base mass randomization
+    randomizeBaseMass: false
+    addedMassRange: [-1., 3.]
+
+    # restitution randomization
+    randomizeRestitution: false
+    restitutionRange: [0.0, 0.4] #
+
+    # com randomization
+    randomizeComDisplacement: false
+    comDisplacementRange: [-0.1, 0.1]
+  
+    # Motor strength randomization
+    randomizeMotorStrength: false
+    motorStrengthRange: [0.9, 1.1]
+    # Motor offset randomization
+    randomizeMotorOffset: false
+    motorOffsetRange: [-0.02, 0.02]
+
+    # Gravity randomization
+    #randomizeGravity: false # TODO
+    #gravityRange: [-1.0, 1.0]
+    #dofPositionsOffsetRange: [0.5, 1.5] # TODO
+    #randomizeLagTimesteps: false # TODO
 
     # random pushes during training
     pushRobots: true

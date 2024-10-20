@@ -7,7 +7,7 @@ from isaacgym import gymapi
 import torch
 from typing import Tuple, Dict
 
-from isaacgymenvs.utils.torch_jit_utils import to_torch, get_axis_params, torch_rand_float, normalize, quat_apply, quat_rotate_inverse, quat_rotate
+from isaacgymenvs.utils.torch_jit_utils import to_torch, get_axis_params, torch_rand_float, normalize, quat_apply, quat_rotate_inverse, quat_rotate, quat_conjugate
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from utils.constraint_manager import ConstraintManager
 from tasks.terrain import Terrain
@@ -60,6 +60,8 @@ class Go2Terrain(VecTask):
         self.rew_scales["dof_vel_limit"] = self.cfg["env"]["learn"]["dofVelLimitRewardScale"]
         self.rew_scales["hip"] = self.cfg["env"]["learn"]["hipRewardScale"]
         self.rew_scales["foot2contact"] = self.cfg["env"]["learn"]["footTwoContactRewardScale"]
+        self.rew_scales["raibertHeuristic"] = self.cfg["env"]["learn"]["raibertHeuristic"]
+        self.rew_scales["standStill"] = self.cfg["env"]["learn"]["standStill"]
         self.lin_vel_delta = self.cfg["env"]["learn"]["linearVelocityXYRewardDelta"]
         self.ang_vel_delta = self.cfg["env"]["learn"]["angularVelocityZRewardDelta"]
         self.air_time_target = self.cfg["env"]["learn"]["feetAirTimeRewardTarget"]
@@ -122,6 +124,7 @@ class Go2Terrain(VecTask):
         self.max_episode_length_s = self.cfg["env"]["learn"]["episodeLength_s"]
         self.max_episode_length = int(self.max_episode_length_s/ self.dt + 0.5)
         self.randomize_friction = self.cfg["env"]["learn"]["randomizeFriction"]
+        self.randomize_motor_friction = self.cfg["env"]["learn"]["randomizeMotorFriction"]
         self.push_enable = self.cfg["env"]["learn"]["pushRobots"]
         self.push_interval = int(self.cfg["env"]["learn"]["pushInterval_s"] / self.dt + 0.5)
         self.allow_knee_contacts = self.cfg["env"]["learn"]["allowKneeContacts"]
@@ -169,6 +172,30 @@ class Go2Terrain(VecTask):
         # Prepare the height scan
         self.height_points = self.prepare_height_points()
         self.measured_heights = torch.zeros(self.num_envs, self.num_height_points, device=self.device, requires_grad=False)
+
+        self.use_actuator_net = self.cfg["env"]["control"]["useActuatorNet"]
+        if self.use_actuator_net:
+            actuator_path = f'{os.path.dirname(os.path.dirname(os.path.realpath(__file__)))}/resources/actuator_nets/unitree_go1.pt'
+            actuator_network = torch.jit.load(actuator_path).to(self.device)
+
+            def eval_actuator_network(joint_pos, joint_pos_last, joint_pos_last_last, joint_vel, joint_vel_last,
+                                      joint_vel_last_last):
+                xs = torch.cat((joint_pos.unsqueeze(-1),
+                                joint_pos_last.unsqueeze(-1),
+                                joint_pos_last_last.unsqueeze(-1),
+                                joint_vel.unsqueeze(-1),
+                                joint_vel_last.unsqueeze(-1),
+                                joint_vel_last_last.unsqueeze(-1)), dim=-1)
+                with torch.no_grad():
+                    torques = actuator_network(xs.view(self.num_envs * 12, 6))
+                return torques.view(self.num_envs, 12)
+
+            self.actuator_network = eval_actuator_network
+
+            self.joint_pos_err_last_last = torch.zeros((self.num_envs, 12), device=self.device)
+            self.joint_pos_err_last = torch.zeros((self.num_envs, 12), device=self.device)
+            self.joint_vel_last_last = torch.zeros((self.num_envs, 12), device=self.device)
+            self.joint_vel_last = torch.zeros((self.num_envs, 12), device=self.device)
 
         # Prepare observations, i.e gather functions that will compute observations
         # and observation noises
@@ -281,7 +308,9 @@ class Go2Terrain(VecTask):
         # Logging rewards over the whole episodes (cumulative sum)
         torch_zeros = lambda : torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
         self.episode_sums = {"lin_vel_xy": torch_zeros(), "ang_vel_z": torch_zeros(), "torques": torch_zeros(),
-                                "action_rate": torch_zeros(), "air_time": torch_zeros(), "foot2contact": torch_zeros()}
+                                "action_rate": torch_zeros(), "air_time": torch_zeros(), "foot2contact": torch_zeros(), "raibertHeuristic": torch_zeros(), "standStill": torch_zeros()}
+        self.cat_cum_discount_factor = torch.ones(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        self.cat_discounted_cum_reward = torch_zeros()
 
         # Reset all environments once to prepare them for the first action
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
@@ -425,6 +454,33 @@ class Go2Terrain(VecTask):
         self.solo_handles = []
         self.envs = []
         self.cam_handles = []
+
+        self.gait_indices = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        self.clock_inputs = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        # Base mass randomization
+        self.randomize_base_mass = self.cfg["env"]["learn"]["randomizeBaseMass"]
+        min_payload, max_payload = self.cfg["env"]["learn"]["addedMassRange"]
+        self.payloads = torch.rand(self.num_envs, dtype=torch.float, device=self.device, 
+            requires_grad=False) * (max_payload - min_payload) + min_payload
+
+        # Restitution randomization
+        self.randomize_restitution = self.cfg["env"]["learn"]["randomizeRestitution"]
+        min_restitution, max_restitution = self.cfg["env"]["learn"]["restitutionRange"]
+        self.restitutions = torch.rand(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False) * \
+            (max_restitution - min_restitution) + min_restitution
+
+        # Com displacement randomization
+        self.randomize_com_displacement = self.cfg["env"]["learn"]["randomizeComDisplacement"]
+        min_com_displacement, max_com_displacement = self.cfg["env"]["learn"]["comDisplacementRange"]
+        self.com_displacements = torch.rand(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False) * \
+            (max_com_displacement - min_com_displacement) + min_com_displacement
+
+        self.motor_strengths = torch.ones(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self.motor_offsets = torch.zeros(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self.motor_mu_v = torch.zeros(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self.motor_Fs = torch.zeros(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self._randomize_dof_props(torch.arange(self.num_envs))
+
         for i in range(self.num_envs):
             # Create one environment
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, num_per_row)
@@ -438,8 +494,24 @@ class Go2Terrain(VecTask):
             if self.randomize_friction:
                 for s in range(len(rigid_shape_prop)):
                     rigid_shape_prop[s].friction = friction_buckets[i % num_buckets]
+
+            if self.randomize_restitution:
+                for s in range(len(rigid_shape_prop)):
+                    rigid_shape_prop[s].restitution = self.restitutions[i]
+
             self.gym.set_asset_rigid_shape_properties(self.solo_asset, rigid_shape_prop)
             solo_handle = self.gym.create_actor(env_handle, self.solo_asset, start_pose, "solo", i, 0, 0)
+
+            body_props = self.gym.get_actor_rigid_body_properties(env_handle, solo_handle)
+            if self.randomize_base_mass:
+                default_body_mass = body_props[0].mass
+                body_props[0].mass = default_body_mass + self.payloads[i]
+
+            if self.randomize_com_displacement:
+                body_props[0].com = gymapi.Vec3(self.com_displacements[i, 0], self.com_displacements[i, 1], \
+                    self.com_displacements[i, 2])
+            self.gym.set_actor_rigid_body_properties(env_handle, solo_handle, body_props, recomputeInertia=True)
+
             self.gym.set_actor_dof_properties(env_handle, solo_handle, dof_props)
             self.envs.append(env_handle)
             self.solo_handles.append(solo_handle)
@@ -479,6 +551,94 @@ class Go2Terrain(VecTask):
             self.termination_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0],
                                                                                         self.solo_handles[0],
                                                                                         termination_contact_names[i])
+
+    def _randomize_dof_props(self, env_ids):
+        # Motor strength randomization
+        self.randomize_motor_strength = self.cfg["env"]["learn"]["randomizeMotorStrength"]
+        min_strength, max_strength = self.cfg["env"]["learn"]["motorStrengthRange"]
+        if self.randomize_motor_strength:
+            self.motor_strengths[env_ids, :] = torch.rand(len(env_ids), dtype=torch.float, device=self.device, requires_grad=False).unsqueeze(1) * \
+                (max_strength - min_strength) + min_strength
+
+        # Motor offsets randomization
+        self.randomize_motor_offset = self.cfg["env"]["learn"]["randomizeMotorOffset"]
+        min_offset, max_offset = self.cfg["env"]["learn"]["motorOffsetRange"]
+        if self.randomize_motor_offset:
+            self.motor_offsets[env_ids, :] = torch.rand(len(env_ids), self.num_dof, dtype=torch.float, device=self.device, requires_grad=False) * \
+                (max_offset - min_offset) + min_offset
+
+        min_mu_v, max_mu_v = self.cfg["env"]["learn"]["mu_vRange"]
+        min_Fs, max_Fs = self.cfg["env"]["learn"]["FsRange"]
+        if self.randomize_motor_friction:
+            self.motor_mu_v[env_ids, :] = torch.rand(len(env_ids), self.num_dof, dtype=torch.float, device=self.device, requires_grad=False) * \
+                (max_mu_v - min_mu_v) + min_mu_v
+            self.motor_Fs[env_ids, :] = torch.rand(len(env_ids), self.num_dof, dtype=torch.float, device=self.device, requires_grad=False) * \
+                (max_Fs - min_Fs) + min_Fs
+
+    def _step_contact_targets(self):
+        frequencies = 3. # torch.tensor([3.], device=self.device).unsqueeze(0)
+        phases = 0.5 # torch.tensor([0.5], device=self.device).unsqueeze(0)
+        offsets = 0. # torch.tensor([0.], device=self.device).unsqueeze(0)
+        bounds = 0. # torch.tensor([0.], device=self.device).unsqueeze(0)
+        durations = 0.5 * torch.ones((self.num_envs,), dtype=torch.float32, device=self.device)
+        self.gait_indices = torch.remainder(self.gait_indices + self.dt * frequencies, 1.0)
+
+        foot_indices = [self.gait_indices + phases + offsets + bounds,
+                        self.gait_indices + offsets,
+                        self.gait_indices + bounds,
+                        self.gait_indices + phases]
+
+        self.foot_indices = torch.remainder(torch.cat([foot_indices[i].unsqueeze(1) for i in range(4)], dim=1), 1.0)
+
+        for idxs in foot_indices:
+            stance_idxs = torch.remainder(idxs, 1) < durations
+            swing_idxs = torch.remainder(idxs, 1) > durations
+
+            idxs[stance_idxs] = torch.remainder(idxs[stance_idxs], 1) * (0.5 / durations[stance_idxs])
+            idxs[swing_idxs] = 0.5 + (torch.remainder(idxs[swing_idxs], 1) - durations[swing_idxs]) * (
+                        0.5 / (1 - durations[swing_idxs]))
+
+        # if self.cfg.commands.durations_warp_clock_inputs:
+
+        self.clock_inputs[:, 0] = torch.sin(2 * np.pi * foot_indices[0])
+        self.clock_inputs[:, 1] = torch.sin(2 * np.pi * foot_indices[1])
+        self.clock_inputs[:, 2] = torch.sin(2 * np.pi * foot_indices[2])
+        self.clock_inputs[:, 3] = torch.sin(2 * np.pi * foot_indices[3])
+
+    def _reward_raibert_heuristic(self):
+        cur_footsteps_translated = self.foot_positions - self.base_pos.unsqueeze(1)
+        footsteps_in_body_frame = torch.zeros(self.num_envs, 4, 3, device=self.device)
+        for i in range(4):
+            footsteps_in_body_frame[:, i, :] = quat_apply_yaw(quat_conjugate(self.base_quat),
+                                                              cur_footsteps_translated[:, i, :])
+
+        # nominal positions: [FR, FL, RR, RL]
+        desired_stance_width = 0.25
+        desired_ys_nom = torch.tensor([desired_stance_width / 2, -desired_stance_width / 2, desired_stance_width / 2, -desired_stance_width / 2], device=self.device).unsqueeze(0)
+
+        desired_stance_length = 0.45
+        desired_xs_nom = torch.tensor([desired_stance_length / 2,  desired_stance_length / 2, -desired_stance_length / 2, -desired_stance_length / 2], device=self.device).unsqueeze(0)
+
+        # raibert offsets
+        phases = torch.abs(1.0 - (self.foot_indices * 2.0)) * 1.0 - 0.5
+        frequencies = torch.tensor([3.0], device=self.device)
+        x_vel_des = self.commands[:, 0:1]
+        yaw_vel_des = self.commands[:, 2:3]
+        y_vel_des = yaw_vel_des * desired_stance_length / 2
+        desired_ys_offset = phases * y_vel_des * (0.5 / frequencies.unsqueeze(1))
+        desired_ys_offset[:, 2:4] *= -1
+        desired_xs_offset = phases * x_vel_des * (0.5 / frequencies.unsqueeze(1))
+
+        desired_ys_nom = desired_ys_nom + desired_ys_offset
+        desired_xs_nom = desired_xs_nom + desired_xs_offset
+
+        desired_footsteps_body_frame = torch.cat((desired_xs_nom.unsqueeze(2), desired_ys_nom.unsqueeze(2)), dim=2)
+
+        err_raibert_heuristic = torch.abs(desired_footsteps_body_frame - footsteps_in_body_frame[:, :, 0:2])
+
+        reward = torch.sum(torch.square(err_raibert_heuristic), dim=(1, 2))
+
+        return reward
 
     def check_termination(self):
         """Check if some env should be terminated, and if so set their reset_buf value to True."""
@@ -659,6 +819,10 @@ class Go2Terrain(VecTask):
         """Dimension of IMU observations."""
         return 3
 
+    def dim_obs_clock_inputs(self):
+        """Dimension of clock_inputs observations."""
+        return 4
+
     # ------------ obs functions ----------------
     def observe_base_lin_vel(self):
         """Observe base linear velocity."""
@@ -699,6 +863,9 @@ class Go2Terrain(VecTask):
         A body resting on the ground will have a net force of zero."""
         return self.force_sensor[:, :3] / self.base_mass * self.imu_scale
 
+    def observe_clock_inputs(self):
+        return self.clock_inputs
+
     # ------------ noise obs functions ----------------
     def noise_base_lin_vel(self):
         """Noise for base linear velocity."""
@@ -737,6 +904,10 @@ class Go2Terrain(VecTask):
     def noise_imu(self):
         """Noise for IMU readings."""
         return torch.zeros(self.dim_obs_imu(), dtype=torch.float, device=self.device, requires_grad=False)
+
+    def noise_clock_inputs(self):
+        """Noise for IMU readings."""
+        return torch.zeros(self.dim_obs_clock_inputs(), dtype=torch.float, device=self.device, requires_grad=False)
 
     ####################
     # Depth cameras
@@ -818,11 +989,17 @@ class Go2Terrain(VecTask):
         # Penalty for having more or less than 2 feet in contact
         rew_foot2contact = - torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2) / 2 * self.rew_scales["foot2contact"]
 
+        rew_raibert_heuristic = self._reward_raibert_heuristic() * self.rew_scales["raibertHeuristic"]
+        rew_stand_still = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) \
+            * (torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone) \
+            * (torch.abs(self.commands[:, 2]) < 0.2) * self.rew_scales["standStill"]
+
         # Total reward, with clipping if < 0
-        self.rew_buf = rew_lin_vel_xy + rew_ang_vel_z + rew_torque + rew_action_rate + rew_airTime + rew_foot2contact
+        self.rew_buf = rew_lin_vel_xy + rew_ang_vel_z + rew_torque + rew_action_rate + rew_airTime + rew_foot2contact + rew_raibert_heuristic + rew_stand_still
         if self.useConstraints == "cat":
             #self.rew_buf = torch.clip(self.rew_buf * (1.0 - self.cstr_prob), min=0., max=None)
             self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
+            #self.rew_buf = self.rew_buf
         else:
             self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
 
@@ -833,6 +1010,9 @@ class Go2Terrain(VecTask):
         self.episode_sums["action_rate"] += rew_action_rate
         self.episode_sums["air_time"] += rew_airTime
         self.episode_sums["foot2contact"] += rew_foot2contact
+        self.episode_sums["raibertHeuristic"] += rew_raibert_heuristic
+        self.episode_sums["standStill"] += rew_stand_still
+        self.cat_discounted_cum_reward += self.cat_cum_discount_factor * self.rew_buf
 
     def compute_reward(self):
         """Compute and stack various rewards for base velocity tracking."""
@@ -1002,23 +1182,27 @@ class Go2Terrain(VecTask):
         # Base orientation constraint (style constraint on roll/pitch angles)
         cstr_base_orientation = torch.norm(self.projected_gravity[:, :2], dim=1) - self.limits["base_orientation"]
 
+        zero_command_active = torch.logical_and(
+            torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
+            torch.abs(self.commands[:, 2]) < 0.2
+        )
         # Air time constraint (style constraint)
         ##cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
         ##cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
-        cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown
-        cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown
+        cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (~zero_command_active).unsqueeze(1)
+        cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown * (~zero_command_active).unsqueeze(1)
 
         # Constraint to stand still when the velocity command is 0 (style constraint)
-        ##cstr_nomove = (torch.abs(self.dof_vel) - 4.0) *(torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
-        cstr_nomove = (torch.abs(self.base_lin_vel[:, :2]) - 0.01) * (torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float().unsqueeze(1)
+        cstr_nomove = (torch.abs(self.dof_vel) - 4.0) * zero_command_active.float().unsqueeze(1)
+        ##cstr_nomove = (torch.norm(self.base_lin_vel[:, :2], dim=-1) - 0.10) * zero_command_active
 
         # Constraint to have exactly 2 feet in contact with the ground at any time when walking (style constraint)
         #cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2) * (torch.norm(self.commands[:, :3], dim=1) > 0.5).float()
-        cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2).float()
-        cstr_diagfootcontact = 1.0 - torch.logical_or(
+        cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2).float() * (~zero_command_active)
+        cstr_diagfootcontact = (1.0 - torch.logical_or(
             (self.contact_forces[:, self.grf_indices[[0,3]], 2] > 1.0).all(1),
             (self.contact_forces[:, self.grf_indices[[1,2]], 2] > 1.0).all(1),
-        ).float()
+        ).float()) * (~zero_command_active)
 
         # Apply aesthetics constraints only on flat terrains
         cstr_HAA *= self.is_flat_terrain.unsqueeze(1)
@@ -1078,8 +1262,8 @@ class Go2Terrain(VecTask):
         self.cstr_manager.add("HAA", cstr_HAA, max_p=soft_p)
         self.cstr_manager.add("base_ori", cstr_base_orientation, max_p=soft_p)
         self.cstr_manager.add("air_time", cstr_air_time, max_p=soft_p)
-        self.cstr_manager.add("max_air_time", cstr_max_air_time, max_p=soft_p)
-        self.cstr_manager.add("no_move", cstr_nomove)
+        self.cstr_manager.add("max_air_time", cstr_max_air_time, max_p=1.0)
+        self.cstr_manager.add("no_move", cstr_nomove, max_p=soft_p)
         self.cstr_manager.add("2footcontact", cstr_2footcontact, max_p=soft_p)
         self.cstr_manager.add("diagfootcontact", cstr_diagfootcontact, max_p=soft_p)
         #self.cstr_manager.add("foot_contact_vertical", cstr_foot_contact_vertical, max_p=soft_p)
@@ -1098,6 +1282,7 @@ class Go2Terrain(VecTask):
 
         # Probability of termination used to affect the discounted sum of rewards
         self.reset_buf = self.cstr_prob
+        self.cat_cum_discount_factor *= 0.99 * (1 - self.cstr_prob)
 
         # Reset of environments upon timeout, invalid collision, being upside-down
         #if not self.allow_knee_contacts:
@@ -1116,6 +1301,9 @@ class Go2Terrain(VecTask):
 
     def reset_idx(self, env_ids):
         """Reset environements when episodes have terminated."""
+
+        self._randomize_dof_props(env_ids)
+        self.gait_indices[env_ids] = 0
 
         # Randomize initial joint positions and velocities, as well as (x, y) position and yaw orientation of the base
         positions_offset = torch_rand_float(0.95, 1.05, (len(env_ids), self.num_dof), device=self.device)  # Multiplicative factor
@@ -1160,6 +1348,7 @@ class Go2Terrain(VecTask):
             self.rew_cum_reset[env_ids] = self.rew_mean[env_ids]
             self.rew_mean_reset[env_ids] = self.rew_mean[env_ids] / torch.maximum(self.progress_buf[env_ids].unsqueeze(0).transpose(0, 1), torch.ones((len(env_ids), 1),  dtype=torch.long, device=self.device))
             self.rew_mean[env_ids] = 0.0
+            self.cat_discounted_cum_reward_reset[env_ids] = self.cat_discounted_cum_reward[env_ids]
 
         # Log mean value of constraints over the terminated episodes
         if self.common_step_counter > 0 and self.numConstraints > 0 and self.useConstraints in ["cat"]:
@@ -1188,6 +1377,8 @@ class Go2Terrain(VecTask):
             akey = key if key.startswith("cstr_") else 'rew_' + key
             self.extras["episode"][akey] = torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             self.episode_sums[key][env_ids] = 0.
+        self.cat_cum_discount_factor[env_ids] = 1.
+        self.cat_discounted_cum_reward[env_ids] = 0.
 
         self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
         self.extras["episode"]["terrain_level_max"] = torch.max(self.terrain_levels.float())
@@ -1200,7 +1391,13 @@ class Go2Terrain(VecTask):
         self.commands[env_ids, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 1] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 2] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids] *= (torch.any(torch.abs(self.commands[env_ids, :3]) > self.vel_deadzone, dim=1)).unsqueeze(1)  # set small commands to zero
+        #self.commands[env_ids] *= (torch.any(torch.abs(self.commands[env_ids, :3]) > self.vel_deadzone, dim=1)).unsqueeze(1)  # set small commands to zero
+
+        # set small commands to zero
+        lin_cmd_cutoff = 0.2
+        ang_cmd_cutoff = 0.2
+        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > lin_cmd_cutoff).unsqueeze(1)
+        self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > ang_cmd_cutoff)
 
     def update_terrain_level(self, env_ids):
         """Update terrain level of robots as they progress to put them in increasingly difficult terrains."""
@@ -1255,27 +1452,44 @@ class Go2Terrain(VecTask):
 
     def pre_physics_step(self, actions):
         """Computing command torques with the PD controller and running the simulation steps between each call of the policy."""
-        
+
         self.actions = actions.clone().to(self.device)
         # If you want constant actions for debug purpose:
         # self.actions[:] = torch.tensor([0.2,  0.1679 , -0.37505, -0.2,  0.1679 , -0.37505, 0.2,  -0.1679 , 0.37505, -0.2,  -0.1679 , 0.37505])
 
         # There is self.decimation steps of simulation between each call to the policy
+        # dt = 0.005
+        # low level control at 0.005
+        # hig level control at 0.2
         for i in range(self.decimation):
-
-            torques = torch.clip(
-                (
-                    self.Kp
-                    * (
-                        self.action_scale * self.actions
-                        + self.default_dof_pos
-                        - self.dof_pos
-                    )
-                    - self.Kd * self.dof_vel
-                ),
-                -100.0,  # Hard higher limit on torques
-                100.0,  # Hard lower limit on torques
-            )
+            if self.use_actuator_net:
+                self.joint_pos_err = self.dof_pos - (self.action_scale * self.actions + self.default_dof_pos) + self.motor_offsets
+                self.joint_vel = self.dof_vel
+                torques = self.actuator_network(self.joint_pos_err, self.joint_pos_err_last, self.joint_pos_err_last_last,
+                                                self.joint_vel, self.joint_vel_last, self.joint_vel_last_last)
+                self.joint_pos_err_last_last = torch.clone(self.joint_pos_err_last)
+                self.joint_pos_err_last = torch.clone(self.joint_pos_err)
+                self.joint_vel_last_last = torch.clone(self.joint_vel_last)
+                self.joint_vel_last = torch.clone(self.joint_vel)
+            else:
+                torques = torch.clip(
+                    (
+                        self.Kp
+                        * (
+                            self.action_scale * self.actions
+                            + self.default_dof_pos
+                            - self.dof_pos + self.motor_offsets
+                        )
+                        - self.Kd * self.dof_vel
+                    ),
+                    -100.0,  # Hard higher limit on torques
+                    100.0,  # Hard lower limit on torques
+                )
+            torques = torques * self.motor_strengths
+            if self.randomize_motor_friction:
+                tau_sticktion = self.motor_Fs * torch.tanh(self.dof_vel / 0.1)
+                tau_viscose = self.motor_mu_v * self.dof_vel
+                torques -= tau_sticktion+tau_viscose
 
             # Saturating command torques (on Solo we saturate the max currents)
             # torques = torch.clamp(torques, -3.5, 3.5)
@@ -1363,6 +1577,8 @@ class Go2Terrain(VecTask):
             self.num_envs, self.num_bodies, 13
         )[:, self.feet_indices, 0:3]
 
+        self._step_contact_targets()
+
         # Update height scan
         self.measured_heights = self.get_heights()
         
@@ -1426,6 +1642,10 @@ class Go2Terrain(VecTask):
             # (1 / p) policy steps for X seconds, and the probability of having no swap at all is (1 - p)**(1 / p) = 0.37
             # The mean number of swaps for (1 / p) steps with probability p is 1.
             self.commands[:, 2] *= 1 - 2 * torch.bernoulli(torch.full_like(self.commands[:, 2], p_ang_vel)).float()
+            """resample_command_idx = (self.progress_buf % int(5. / self.dt)==0).nonzero(as_tuple=False).flatten()
+            if len(resample_command_idx) > 0:
+                self.resample_commands(resample_command_idx)"""
+
 
         # Compute observations
         self.update_depth_buffer()
@@ -1526,7 +1746,7 @@ class Go2Terrain(VecTask):
             self.rew_mean = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
             self.rew_cum_reset = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
             self.rew_mean_reset = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
-
+            self.cat_discounted_cum_reward_reset = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device, requires_grad=False)
         # If there is any enabled rewards
         if self.numRewards > 0:
             for i, key in enumerate(list(self.episode_sums.keys())[:self.numRewards]):
@@ -1575,8 +1795,9 @@ class Go2Terrain(VecTask):
         table_rew_cum.set_cols_dtype(['t', 'f'])
         table_rew_cum.add_rows(
             np.array([
-                ["Info"] + ["Cumulated Rewards"] + ["Average level"],
-                ["Value"] + [(torch.sum(torch.mean(self.rew_cum_reset, dim=0))).item()] + [self.terrain_levels.float().mean().item()]
+                ["Info"] + ["Cumulated Rewards"] + ["Average level"] + ["Cumulated Discounted Rewards"],
+                ["Value"] + [(torch.sum(torch.mean(self.rew_cum_reset, dim=0))).item()] + [self.terrain_levels.float().mean().item()] + \
+                    [(torch.mean(self.cat_discounted_cum_reward_reset, dim=0)).item()]
             ]).transpose()
         )
 
