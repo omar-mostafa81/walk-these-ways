@@ -46,12 +46,17 @@ class Go2Parkour(VecTask):
         # Scales of rewards
         self.rew_scales = {}
 
+        self.rew_scales["lin_vel_xy"] = self.cfg["env"]["learn"]["linearVelocityXYRewardScale"] 
+        self.rew_scales["ang_vel_z"] = self.cfg["env"]["learn"]["angularVelocityZRewardScale"] 
+
         self.rew_scales["power"] = self.cfg["env"]["learn"]["powerRewardScale"]
         self.rew_scales["survivalBonus"] = self.cfg["env"]["learn"]["survivalBonus"]
         self.rew_scales["ang_vel_xy"] = self.cfg["env"]["learn"]["angVelXYRewardScale"]
         self.rew_scales["orientation"] = self.cfg["env"]["learn"]["orientationRewardScale"]
         self.rew_scales["torque"] = self.cfg["env"]["learn"]["torqueRewardScale"]
 
+        self.lin_vel_delta = self.cfg["env"]["learn"]["linearVelocityXYRewardDelta"]
+        self.ang_vel_delta = self.cfg["env"]["learn"]["angularVelocityZRewardDelta"]
 
         self.numRewards = -1
 
@@ -110,6 +115,7 @@ class Go2Parkour(VecTask):
         self.max_episode_length_s = self.cfg["env"]["learn"]["episodeLength_s"] 
         self.max_episode_length = int(self.max_episode_length_s/ self.dt + 0.5)
         self.randomize_friction = self.cfg["env"]["learn"]["randomizeFriction"]
+        self.randomize_motor_friction = self.cfg["env"]["learn"]["randomizeMotorFriction"]
         self.push_enable = self.cfg["env"]["learn"]["pushRobots"]
         self.push_prob = self.dt/self.cfg["env"]["learn"]["pushInterval_s"]
         self.allow_knee_contacts = self.cfg["env"]["learn"]["allowKneeContacts"]
@@ -191,6 +197,7 @@ class Go2Parkour(VecTask):
         self.dof_pos = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
         self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
+        self.last_contact_forces = self.contact_forces.clone()
         self.rigid_body_state = gymtorch.wrap_tensor(rigid_body_state)
         self.force_sensor = gymtorch.wrap_tensor(force_sensor_tensor)
 
@@ -260,7 +267,10 @@ class Go2Parkour(VecTask):
 
         # Logging rewards over the whole episodes (cumulative sum)
         torch_zeros = lambda : torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
-        self.episode_sums = {"lin_vel": torch_zeros(), "power": torch_zeros(), "orientation": torch_zeros(), "ang_vel_xy": torch_zeros(), "torque": torch_zeros()}
+        self.episode_sums = {"lin_vel_xy": torch_zeros(), "ang_vel_z": torch_zeros()}
+        ##self.episode_sums = {"lin_vel_xy": torch_zeros()}
+        self.cat_cum_discount_factor = torch.ones(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        self.cat_discounted_cum_reward = torch_zeros()
 
         # Reset all environments once to prepare them for the first action
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
@@ -388,7 +398,7 @@ class Go2Parkour(VecTask):
         # Gather env origins and spread the robots over the whole terrain
         # The terrain is divided into rows (levels) and columns (types), each cell being a potential spawn location
         self.env_origins = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
-        if not self.curriculum: self.cfg["env"]["terrain"]["maxInitMapLevel"] = self.cfg["env"]["terrain"]["numLevels"] - 1
+        ##if not self.curriculum: self.cfg["env"]["terrain"]["maxInitMapLevel"] = self.cfg["env"]["terrain"]["numLevels"] - 1
         if self.cfg["env"]["terrain"]["maxInitMapLevel"] < self.cfg["env"]["terrain"]["minInitMapLevel"]:
             self.cfg["env"]["terrain"]["maxInitMapLevel"] = self.cfg["env"]["terrain"]["minInitMapLevel"]
         self.terrain_levels = torch.randint(self.cfg["env"]["terrain"]["minInitMapLevel"], self.cfg["env"]["terrain"]["maxInitMapLevel"]+1, (self.num_envs,), device=self.device)
@@ -400,7 +410,10 @@ class Go2Parkour(VecTask):
         if self.cfg["test"] and self.cfg["env"]["startAtLevel"] != -1:
             # Force all robots to spawn at the same level
             self.terrain_levels[:] = self.cfg["env"]["startAtLevel"]
-        self.terrain_ceilings = torch.from_numpy(self.terrain.ceilings).to(self.device).to(torch.float)
+        if self.cfg["env"]["terrain"]["terrainType"] == "trimesh":
+            self.terrain_ceilings = torch.from_numpy(self.terrain.ceilings).to(self.device).to(torch.float)
+        else:
+            self.terrain_ceilings = torch.ones((1, self.cfg["env"]["terrain"]["numTerrains"]), dtype=torch.float, device=self.device, requires_grad=False)
 
         # Create the env instances and save the handles to interact with them
         env_lower = gymapi.Vec3(-spacing, -spacing, 0.0)
@@ -408,6 +421,9 @@ class Go2Parkour(VecTask):
         self.solo_handles = []
         self.envs = []
         self.cam_handles = []
+        self.motor_mu_v = torch.zeros(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self.motor_Fs = torch.zeros(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self._randomize_dof_props(torch.arange(self.num_envs))
         for i in range(self.num_envs):
             # Create one environment
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, num_per_row)
@@ -462,7 +478,14 @@ class Go2Parkour(VecTask):
             self.termination_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0],
                                                                                         self.solo_handles[0],
                                                                                         termination_contact_names[i])
-
+    def _randomize_dof_props(self, env_ids):
+        min_mu_v, max_mu_v = self.cfg["env"]["learn"]["mu_vRange"]
+        min_Fs, max_Fs = self.cfg["env"]["learn"]["FsRange"]
+        if self.randomize_motor_friction:
+            self.motor_mu_v[env_ids, :] = torch.rand(len(env_ids), self.num_dof, dtype=torch.float, device=self.device, requires_grad=False) * \
+                (max_mu_v - min_mu_v) + min_mu_v
+            self.motor_Fs[env_ids, :] = torch.rand(len(env_ids), self.num_dof, dtype=torch.float, device=self.device, requires_grad=False) * \
+                (max_Fs - min_Fs) + min_Fs
     def check_termination(self):
         """Check if some env should be terminated, and if so set their reset_buf value to True."""
 
@@ -564,7 +587,7 @@ class Go2Parkour(VecTask):
             obs_meas = torch.cat(
                 (
                     obs_meas,
-                    observation_function(),                
+                    observation_function(),
                 ),
                 dim=-1,
             )
@@ -589,6 +612,17 @@ class Go2Parkour(VecTask):
         for i in range(self.numHistorySamples):
             j = i * self.numHistoryStep * self.sampleObsSize
             self.obs_buf[:, i * self.sampleObsSize : (i+1) * self.sampleObsSize] = self.hist_obs_buf[:, j:(j + self.sampleObsSize)]
+
+    def get_robot_command(self):
+        base_quat = self.root_states[:, 3:7]
+        _, _, yaw = get_euler_xyz(base_quat)
+        zero = torch.zeros_like(yaw)
+        yaw_quat = quat_from_euler_xyz(zero, zero, yaw)
+        command_3d = torch.zeros((self.num_envs, 3), device=self.device)
+        command_3d[:, :2] = self.commands[:, :2]
+        robot_command = quat_rotate_inverse(yaw_quat, command_3d)
+        robot_command[:, 2] = self.commands[:, 2]
+        return robot_command
 
     # ------------ dim obs functions ----------------
     def dim_obs_base_lin_vel(self):
@@ -642,15 +676,8 @@ class Go2Parkour(VecTask):
         ##relative_commands[:, 2] = self.commands[:, 2]
         #return relative_commands
 
-        base_quat = self.root_states[:, 3:7]
-        _, _, yaw = get_euler_xyz(base_quat)
-        zero = torch.zeros_like(yaw)
-        yaw_quat = quat_from_euler_xyz(zero, zero, yaw)
-        command_3d = torch.zeros((self.num_envs,3)).to('cuda')
-        command_3d[:, :2] = self.commands[:, :2]
-        robot_command = quat_rotate_inverse(yaw_quat, command_3d)
-        robot_command[:, 2] = self.commands[:, 2]
-        return robot_command * self.commands_scale
+        return self.get_robot_command() * self.commands_scale
+        ##return self.commands[:, :3] * self.commands_scale
 
     def observe_misc(self):
         """Observe misc quantities.
@@ -659,7 +686,8 @@ class Go2Parkour(VecTask):
         """
         return torch.cat((self.projected_gravity,  # projected gravity, an image of the orientation (t)
                           self.dof_pos * self.dof_pos_scale, # joint positions (t)
-                          ((self.dof_pos - self.last_dof_pos[:, :, 0]) / self.dt) * self.dof_vel_scale, # joint velocities (t)
+                          self.dof_vel * self.dof_vel_scale,
+                          #((self.dof_pos - self.last_dof_pos[:, :, 0]) / self.dt) * self.dof_vel_scale, # joint velocities (t)
                           self.actions, # joint position targets (t - 1)
                          ), dim=-1)
 
@@ -785,53 +813,34 @@ class Go2Parkour(VecTask):
 
     def compute_reward(self):
         """Compute a limited set of rewards for constraints as terminations."""
-
-        command = torch.norm(self.commands[:, :2], dim=1)
-
+        """command = torch.norm(self.commands[:, :2], dim=1)
         # Velocity reward
         lin_vel = self.root_states[:, 7:9]
-        no_move=  (torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone).float().unsqueeze(1)
-        direction = no_move*torch.nn.functional.normalize(-lin_vel) + (1-no_move)*torch.nn.functional.normalize(self.commands[:, :2])
-        rew_vel = (direction * lin_vel).sum(1)
+        no_move = torch.logical_and(
+            torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
+            torch.abs(self.commands[:, 2]) < self.vel_deadzone
+        ).float().unsqueeze(1)
+        direction = no_move * torch.nn.functional.normalize(-lin_vel) + \
+            (1 - no_move) * torch.nn.functional.normalize(self.commands[:, :2])
+        rew_vel = (direction * lin_vel).sum(1).clamp(max=command)
+        rew_survival = self.rew_scales["survivalBonus"]
+        self.rew_buf = rew_vel + rew_survival"""
 
-        #rew_vel = (direction * lin_vel).sum(1).clamp(max=command)
-        rew_vel = (direction * lin_vel).sum(1).clamp(max=command) # * torch.nn.functional.cosine_similarity(self.base_lin_vel[:, :2], torch.tensor([1.0, 0.0]).to(self.device)).clamp(min=0.0)
+        robot_command = self.get_robot_command()
+        lin_vel_error = torch.sum(torch.square(robot_command[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+        rew_lin_vel_xy = torch.exp(-lin_vel_error / self.lin_vel_delta) * self.rew_scales["lin_vel_xy"]
+        rew_ang_vel_z = torch.exp(-ang_vel_error / self.ang_vel_delta) * self.rew_scales["ang_vel_z"]
 
-        # Power reward
-        torque_friction = 0.0477*torch.sign(self.dof_vel) + 0.000135*self.dof_vel
-        power_friction = (torque_friction*self.dof_vel).sum(1) # friction loss
-        power_joule = (torque_friction + self.torques).pow(2).sum(1)/4.81 # heating by Joule
-        power_work = (self.torques * self.dof_vel).sum(1) # mechanical power generated by the motors
-        power = power_friction + power_joule #+ self.power_work
-
-        #power_command = (1.0 - torch.norm(self.commands[:, :2], dim=1).clamp(max=1.0).pow(2))
-        #max_power = 10.0
-        #rew_power = (max_power - power.clamp(max=max_power))/max_power
-
-        rew_power = self.rew_scales["power"] * power
-
-        rew_orientation = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
-        rew_ang_vel_xy = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
-
-        rew_torques = torch.sum(torch.square(self.torques), dim=1)
-
-        #rew_survival = self.rew_scales["survivalBonus"] * torch.tensor([self.common_step_counter / (self.cfg["horizon_length"] * self.cfg["max_epochs"])], device=self.device).clamp(min=0.0, max=1.0)
         rew_survival = self.rew_scales["survivalBonus"]
 
-        self.rew_buf = rew_vel + rew_power + rew_survival  + rew_orientation * self.rew_scales["orientation"] + rew_ang_vel_xy * self.rew_scales["ang_vel_xy"] + rew_torques * self.rew_scales["torque"]
+        self.rew_buf = rew_lin_vel_xy #+ rew_ang_vel_z
 
-        #if self.useConstraints == "cat":
-        #    self.rew_buf = torch.clip(self.rew_buf * (1.0 - self.cstr_prob), min=0., max=None)
-        #else:
-        #    self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
         self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
 
         # Saving the cumulative sum of rewards over the episodes
-        self.episode_sums["lin_vel"] += rew_vel
-        self.episode_sums["power"] += power
-        self.episode_sums["orientation"] += rew_orientation
-        self.episode_sums["ang_vel_xy"] += rew_ang_vel_xy
-        self.episode_sums["torque"] += rew_torques
+        self.episode_sums["lin_vel_xy"] += rew_lin_vel_xy
+        self.episode_sums["ang_vel_z"] += rew_ang_vel_z
 
     ####################
     # CaT Constraints
@@ -846,26 +855,7 @@ class Go2Parkour(VecTask):
 
                 self.Kd = init_Kd + (last_Kd - init_Kd) * min(self.common_step_counter / n_Kd_curriculum_steps, 1.0)
 
-        """Compute various constraints for constraints as terminations. Constraints violations are asssessed then
-        handed out to a constraint manager (ConstraintManager class) that will compute termination probabilities."""
-
-        torque_friction = 0.0477*torch.sign(self.dof_vel) + 0.000135*self.dof_vel
-        self.power_friction = (torque_friction*self.dof_vel).sum(1) # friction loss
-        self.power_joule = (torque_friction + self.torques).pow(2).sum(1)/4.81 # heating by Joule
-        self.power_work = (self.torques * self.dof_vel).sum(1) # mechanical power generated by the motors
-        power = self.power_friction + self.power_joule # + self.power_work
-        #power += (self.torques * self.dof_vel).clamp(min=0.0).sum(1)
-        #self.power = power
-        #mask = self.power == 0
-        #self.power = mask * power + ~mask * (0.96 * self.power + 0.04 * power)
-        self.power = 0.96 * self.power + 0.04 * power
-
-        power_command = 1.0 + 9.0 * torch.norm(self.commands[:, :2], dim=1) 
-
-        cstr_power = self.power - power_command
-
-        #_, _, yaw = get_euler_xyz(self.root_states[:, 3:7])
-        base_quat = self.root_states[:, 3:7]
+        """base_quat = self.root_states[:, 3:7]
         yaw_quat = 2 * torch.atan2(base_quat[..., 2], base_quat[..., 3])
         command_norm = torch.nn.functional.normalize(self.commands[:, :2], dim=-1)
         yaw_command = torch.atan2(command_norm[..., 1], command_norm[..., 0])
@@ -873,30 +863,26 @@ class Go2Parkour(VecTask):
         angle = torch.abs(yaw_diff)
 
         cstr_heading = (angle-self.limits["heading"]).clamp(max=1.5)* (torch.norm(self.base_lin_vel[:, :2], dim=1) > 0.1).float()
-        cstr_heading_hard = (angle-1.5) * (torch.norm(self.base_lin_vel[:, :2], dim=1) > 0.1).float()
+        cstr_heading_hard = (angle-1.5) * (torch.norm(self.base_lin_vel[:, :2], dim=1) > 0.1).float()"""
+        zero_command_active = torch.logical_or(
+            torch.logical_and(
+                torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
+                torch.abs(self.commands[:, 2]) < self.vel_deadzone
+            ),
+            self.commands[:, 0] < self.vel_deadzone
+        )
 
-        cstr_heading2 = torch.maximum(torch.abs(self.base_lin_vel[:, 1]), -self.base_lin_vel[:, 0]) - 0.2
-
-        #cstr_ang_vel = torch.norm(self.base_ang_vel, dim=1) - self.limits["ang_vel"]
-        cstr_ang_vel = torch.abs(self.base_ang_vel[:, 2]) - self.limits["ang_vel"]
-
-
-        #cstr_heading3 = (0.995 - torch.nn.functional.cosine_similarity(self.base_lin_vel[:, :2], torch.tensor([1.0, 0.0]).to(self.device))) * (torch.norm(self.base_lin_vel[:, :2], dim=1) > self.vel_deadzone).float()
-        cstr_heading4 = torch.abs(self.base_lin_vel[:, 1]) - 0.1
-
+        base_quat = self.root_states[:, 3:7]
+        _, _, yaw = get_euler_xyz(base_quat)
+        yaw_command = torch.atan2(self.commands[:, 1], self.commands[:, 0])
+        yaw_diff = torch.atan2(torch.sin(yaw - yaw_command), torch.cos(yaw - yaw_command))
+        angle = torch.abs(yaw_diff)
+        cstr_heading = (angle - self.limits["heading"]) * (~zero_command_active).float()
+        cstr_ang_vel_z = torch.abs(self.base_ang_vel[:, 2]) - 2.
 
         # ------------ Soft constraints ----------------
 
         # Torque constraint
-        ##cstr_torque = torch.abs(self.torques) - self.limits["torque"]
-        cstr_hard_torque = torch.abs(self.torques) - self.limits["torque"]
-
-        # Joint velocity constraint
-        ##cstr_joint_vel = torch.abs(self.dof_vel) - self.limits["vel"]
-
-        # Joint acceleration constraint
-        cstr_joint_acc = torch.abs(self.last_dof_vel[:, :, 0] - self.dof_vel) / self.dt - self.limits["acc"]
-
         # urdf limits
         cstr_joint_vel = torch.abs(self.dof_vel) - self.dof_vel_limits
         cstr_torque = torch.abs(self.torques) - self.torque_limits
@@ -904,7 +890,6 @@ class Go2Parkour(VecTask):
         cstr_dof_pos_upper = self.dof_pos - self.dof_pos_limits[:, 1]
 
         # Action rate constraint (for command smoothness)
-        #cstr_action_rate = torch.norm(self.actions - self.last_actions[:, :, 0], dim=-1) / self.dt - self.limits["action_rate"]
         cstr_action_rate = torch.abs(self.actions - self.last_actions[:, :, 0]) / self.dt - self.limits["action_rate"]
 
         # ------------ Hard constraints ----------------
@@ -914,7 +899,6 @@ class Go2Parkour(VecTask):
         cstr_knee_contact = torch.norm(self.contact_forces[:, self.knee_indices, :], dim=2)
 
         # Base contact constraint
-        #cstr_base_contact = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1.0
         cstr_base_contact = torch.norm(self.contact_forces[:, self.base_index, :], dim=1)
 
         # Contacts causing early stopping
@@ -927,14 +911,8 @@ class Go2Parkour(VecTask):
         cstr_foot_stumble = torch.norm(self.contact_forces[:, self.grf_indices, :2], dim=2) - 4.0 * torch.abs(self.contact_forces[:, self.grf_indices, 2])
 
         # Constraint on the two front HFE joints
-        cstr_HFE = torch.abs(self.dof_pos[:, [1, 4]]) - self.limits["HFE"] # Only front legs
-        #cstr_HFE = torch.maximum(self.dof_pos[:, [1, 4]] - self.limits["HFE"], -0.2 - self.dof_pos[:, [1, 4]])
         cstr_HFE = self.dof_pos[:, [1, 4]] - self.limits["HFE"]
         cstr_HFE_min = self.limits["HFE_min"] - self.dof_pos[:, [1, 4]]
-        cstr_HFE_style = self.dof_pos[:, [1, 4, 7, 10]] - 1.3
-
-        # Constraint on the two back HFE joints
-        cstr_H_HFE = self.dof_pos[:, [7, 10]] - 1.9
 
         # Constraint on the KFE (knee) joints
         cstr_KFE = self.dof_pos[:, [2, 5, 8, 11]]
@@ -946,62 +924,42 @@ class Go2Parkour(VecTask):
         # Constraint to not fall outside of the tracj
         cstr_lava = self.root_states[:, 2] < -0.05
 
-        cstr_minbaseheight = (self.limits["min_base_height"] - self.root_states[:, 2]) * (self.ceilings >= 0.34).float()
-        cstr_base_height_min = torch.any(cstr_minbaseheight > 0)
-
-
-
-        cstr_foot_stumble = torch.norm(self.contact_forces[:, self.grf_indices, :2], dim=2) - 4.0*torch.abs(self.contact_forces[:, self.grf_indices, 2])
+        cstr_minbaseheight = (self.root_states[:, 2] - self.limits["min_base_height"]) * (self.ceilings >= 0.34).float()        
+        cstr_base_height_min = torch.any(cstr_minbaseheight < 0)
 
         # ------------ Style constraints ----------------
 
         # Hip constraint (style constraint on HAA joint)
         cstr_HAA = torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]) - self.limits["HAA"]
 
-
         # Base orientation constraint (style constraint on roll/pitch angles)
-        #cstr_base_orientation = torch.norm(self.projected_gravity[:, :2], dim=1).clamp(2*self.limits["base_orientation"]) - self.limits["base_orientation"]
         cstr_base_orientation = torch.norm(self.projected_gravity[:, :2], dim=1) - self.limits["base_orientation"]
         cstr_base_orientation_x = torch.abs(self.projected_gravity[:, 1]) - self.limits["base_orientation"]
 
         # Air time constraint (style constraint)
-        cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (torch.norm(self.commands[:, :2], dim=1) > self.vel_deadzone).float().unsqueeze(1)
+        cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (~zero_command_active).float().unsqueeze(1)
 
         # Constraint to stand still when the velocity command is 0 (style constraint)
-        #cstr_nomove = (torch.norm(self.dof_pos - self.default_dof_pos, dim=1) - 0.1)*(torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone).float().unsqueeze(1)
-        cstr_nomove = (torch.abs(self.dof_vel) - 2.0) *(torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone).float().unsqueeze(1)
+        cstr_nomove = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 4).float() * zero_command_active.float()
 
         # Constraint to have exactly 2 feet in contact with the ground at any time when walking (style constraint)
-        cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2.0)
+        cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2).float() * (~zero_command_active)
 
         # Apply aesthetics constraints only on flat terrains
         self.is_flat_terrain = (((self.measured_heights.var(1) < self.flat_terrain_threshold) & (self.ceilings >= 0.34)) | (self.terrain_levels <= 1)).float()
-        #self.is_flat_terrain = ((self.measured_heights.var(1) < self.flat_terrain_threshold)).float()
 
         cstr_base_orientation *= self.is_flat_terrain
-        #cstr_nomove *= self.is_flat_terrain.unsqueeze(1)
-        #cstr_HFE_style *= self.is_flat_terrain.unsqueeze(1)
-        command_vel = torch.norm(self.commands[:, :2], dim=1)
 
         # We impose a certain walking style on flat surfaces to make the robot walk very nicely
         cstr_2footcontact *= ((self.measured_heights.var(1) < self.flat_terrain_threshold) & (self.ceilings >= 0.34)).float()
-        #cstr_2footcontact *= ((command_vel > self.vel_deadzone) & (command_vel < 0.8)).float()
-        cstr_2footcontact *= (command_vel > self.vel_deadzone).float()
 
-        cstr_HFE_style *= ((self.ceilings >= 0.34) & (self.terrain_levels <= 4)).unsqueeze(1).float()
-        cstr_nomove *= ((self.measured_heights.var(1) < self.flat_terrain_threshold) & (self.ceilings >= 0.34)).float().unsqueeze(1)
-
-        #cstr_HAA *= (self.measured_heights.var(1) < self.flat_terrain_threshold).unsqueeze(1)
-
+        cstr_nomove *= ((self.measured_heights.var(1) < self.flat_terrain_threshold) & (self.ceilings >= 0.34)).float()
 
         # ------------ Applying constraints ----------------
 
         # Maximum termination probability for soft and style constraints
         soft_p = self.constraints["soft_p"]
-        m_soft_p =0.1+ soft_p
-        m_soft_p = 2.0*soft_p
-        m_soft_p = 0.15 + soft_p # a15
-        m_soft_p = 0.1 + soft_p # a10
+        m_soft_p = 0.1 + soft_p
 
         # Curriculum on soft_p value (optionnal)
         # Soft and style constraints are initially less enforced to let the policy explore more.
@@ -1016,13 +974,10 @@ class Go2Parkour(VecTask):
             soft_p = 1 / (T_start + self.constraints["curriculum"] * (T_end - T_start))
 
         # Soft constraints
-        #self.cstr_manager.add("power", cstr_power, max_p=0.05)
-        self.cstr_manager.add("heading", sqrt_func(cstr_heading), max_p=m_soft_p)
-        self.cstr_manager.add("heading_hard", sqrt_func(cstr_heading_hard), max_p=1.0)
-        #self.cstr_manager.add("heading2", sqrt_func(cstr_heading2), max_p=1.0)
-        #self.cstr_manager.add("heading3", cstr_heading3, max_p=soft_p)
-        #self.cstr_manager.add("heading4",sqrt_func(cstr_heading4), max_p=0.1)
-        #self.cstr_manager.add("ang_vel", sqrt_func(cstr_ang_vel), max_p=0.1)
+        ##self.cstr_manager.add("heading", sqrt_func(cstr_heading), max_p=m_soft_p)
+        ##self.cstr_manager.add("heading_hard", sqrt_func(cstr_heading_hard), max_p=1.0)
+        self.cstr_manager.add("heading", sqrt_func(cstr_heading), max_p=soft_p)
+        ##self.cstr_manager.add("ang_vel_z", sqrt_func(cstr_ang_vel_z), max_p=m_soft_p)
 
         self.cstr_manager.add("stumble", sqrt_func(cstr_foot_stumble), max_p=m_soft_p)
 
@@ -1032,15 +987,6 @@ class Go2Parkour(VecTask):
         self.cstr_manager.add("torque", cstr_torque, max_p=soft_p)
         self.cstr_manager.add("joint_vel",  cstr_joint_vel, max_p=soft_p)
 
-        ##self.cstr_manager.add("torque", sqrt_func(cstr_torque), max_p=soft_p)
-        #self.cstr_manager.add("hard_torque", sqrt_func(cstr_hard_torque), max_p=1.0)
-        #self.cstr_manager.add("torque_0.2", sqrt_func(cstr_torque), max_p=0.2)
-        #self.cstr_manager.add("torque_0.1", sqrt_func(cstr_torque), max_p=0.1)
-        #self.cstr_manager.add("torque_1.5", sqrt_func(cstr_torque), max_p=1.5*soft_p)
-        #self.cstr_manager.add("torque_1.1", sqrt_func(cstr_torque), max_p=1.1*soft_p)
-
-        ##self.cstr_manager.add("joint_acc", sqrt_func(cstr_joint_acc), max_p=soft_p)
-        ##self.cstr_manager.add("joint_vel",  sqrt_func(cstr_joint_vel), max_p=soft_p)
         self.cstr_manager.add("action_rate", sqrt_func(cstr_action_rate), max_p=soft_p)
 
         # Hard constraints
@@ -1049,22 +995,18 @@ class Go2Parkour(VecTask):
         self.cstr_manager.add("foot_contact", sqrt_func(cstr_foot_contact), max_p=1.0)
         self.cstr_manager.add("upsidedown", cstr_upsidedown, max_p=1.0)
         self.cstr_manager.add("lava", cstr_lava, max_p=1.0)
-        ##self.cstr_manager.add("min_base_height", sqrt_func(cstr_minbaseheight), max_p=1.0)
 
         # Joint constraints
         soft_p_joint = soft_p
         self.cstr_manager.add("HFE", sqrt_func(cstr_HFE), max_p=soft_p_joint)
         self.cstr_manager.add("HFE_min", sqrt_func(cstr_HFE_min), max_p=soft_p_joint)
-        ##self.cstr_manager.add("HFE_style", sqrt_func(cstr_HFE_style), max_p=soft_p_joint)
         self.cstr_manager.add("KFE", sqrt_func(cstr_KFE), max_p=soft_p_joint)
         self.cstr_manager.add("KFE_min", sqrt_func(cstr_KFE_min), max_p=soft_p_joint)
-        ##self.cstr_manager.add("H_HFE", sqrt_func(cstr_H_HFE), max_p=soft_p_joint)
         self.cstr_manager.add("HAA", sqrt_func(cstr_HAA), max_p=soft_p_joint)
-        #self.cstr_manager.add("HAA_style", sqrt_func(cstr_HAA_style), max_p=soft_p_joint)
 
         # Style constraints
         self.cstr_manager.add("base_ori", sqrt_func(cstr_base_orientation), max_p=soft_p)
-        self.cstr_manager.add("base_ori_x", sqrt_func(cstr_base_orientation_x), max_p=m_soft_p)
+        #self.cstr_manager.add("base_ori_x", sqrt_func(cstr_base_orientation_x), max_p=m_soft_p)
 
         self.cstr_manager.add("air_time", cstr_air_time, max_p=soft_p)
         self.cstr_manager.add("no_move", sqrt_func(cstr_nomove), max_p=soft_p)
@@ -1080,26 +1022,11 @@ class Go2Parkour(VecTask):
 
         # Probability of termination used to affect the discounted sum of rewards
         self.reset_buf = self.cstr_prob
-
-        # Reset of environments upon timeout, invalid collision, being upside-down
-        #if not self.allow_knee_contacts:
-        #    self.reset_env_buf = timeout | cstr_base_contact | cstr_knee_contact | cstr_upsidedown
-        #else:
-        #    self.reset_env_buf = timeout | cstr_base_contact | cstr_upsidedown
-        ##self.reset_env_buf = timeout | cstr_upsidedown | cstr_lava
         self.reset_env_buf = timeout | cstr_upsidedown | cstr_lava | cstr_termination_contacts | cstr_base_height_min
 
         self.extras["true_dones"] = self.reset_env_buf
         self.extras["truncateds"] = timeout
         self.extras["raw_constraints"] = self.cstr_manager.get_raw_constraints()
-
-        # Code for counting the number of constraints
-        #total = 0
-        #for key, value in self.cstr_manager.raw_constraints.items():
-        #    print(key, ":", value.size(1))
-        #    total += value.size(1)
-        #print("Total :", total)
-        #assert False
 
     ####################
     # Other
@@ -1107,6 +1034,7 @@ class Go2Parkour(VecTask):
 
     def reset_idx(self, env_ids):
         """Reset environements when episodes have terminated."""
+        self._randomize_dof_props(env_ids)
 
         # Randomize initial joint positions and velocities, as well as (x, y) position and yaw orientation of the base
         positions_offset = torch_rand_float(0.95, 1.05, (len(env_ids), self.num_dof), device=self.device)  # Multiplicative factor
@@ -1152,6 +1080,7 @@ class Go2Parkour(VecTask):
             self.rew_cum_reset[env_ids] = self.rew_mean[env_ids]
             self.rew_mean_reset[env_ids] = self.rew_mean[env_ids] / torch.maximum(self.progress_buf[env_ids].unsqueeze(0).transpose(0, 1), torch.ones((len(env_ids), 1),  dtype=torch.long, device=self.device))
             self.rew_mean[env_ids] = 0.0
+            self.cat_discounted_cum_reward_reset[env_ids] = self.cat_discounted_cum_reward[env_ids]
 
         # Log mean value of constraints over the terminated episodes
         if self.common_step_counter > 0 and self.numConstraints > 0 and self.useConstraints in ["cat"]:
@@ -1186,6 +1115,8 @@ class Go2Parkour(VecTask):
             akey = key if key.startswith("cstr_") else 'rew_' + key
             self.extras["episode"][akey] = torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             self.episode_sums[key][env_ids] = 0.
+        self.cat_cum_discount_factor[env_ids] = 1.
+        self.cat_discounted_cum_reward[env_ids] = 0.
 
         self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
         self.extras["episode"]["terrain_level_max"] = torch.max(self.terrain_levels.float())
@@ -1202,13 +1133,26 @@ class Go2Parkour(VecTask):
         #self.commands[env_ids, 0] = distances * torch.cos(angles)
         #self.commands[env_ids, 1] = distances * torch.sin(angles)
 
-        self.commands[env_ids, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
+        """self.commands[env_ids, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 1] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze() * self.commands[env_ids, 0]
         self.commands[env_ids, :2] /= torch.norm(self.commands[env_ids, :2], dim=1).clamp(min=1.0).unsqueeze(-1) # Make sure that the command is inside the unit sphere
 
         self.commands[env_ids, 2] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids] *= (torch.any(torch.abs(self.commands[env_ids, :3]) > self.vel_deadzone, dim=1)).unsqueeze(1)  # set small commands to zero
+        self.commands[env_ids] *= (torch.any(torch.abs(self.commands[env_ids, :3]) > self.vel_deadzone, dim=1)).unsqueeze(1)  # set small commands to zero"""
 
+        self.commands[env_ids, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
+        self.commands[env_ids, 1] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
+        ##self.commands[env_ids, 2] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
+        self.commands[env_ids, 2] = torch.zeros(len(env_ids), device=self.device)
+
+        # set small commands to zero
+        lin_cmd_cutoff = self.vel_deadzone
+        ang_cmd_cutoff = self.vel_deadzone
+        self.commands[env_ids, :2] *= torch.logical_and(
+            torch.norm(self.commands[env_ids, :2], dim=1) > lin_cmd_cutoff,
+            self.commands[env_ids, 0] > lin_cmd_cutoff
+        ).unsqueeze(1)
+        self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > ang_cmd_cutoff)        
 
     def update_terrain_level(self, env_ids):
         """Update terrain level of robots as they progress to put them in increasingly difficult terrains."""
@@ -1294,6 +1238,10 @@ class Go2Parkour(VecTask):
                 100.0,  # Hard lower limit on torques
             )
 
+            if self.randomize_motor_friction:
+                tau_sticktion = self.motor_Fs * torch.tanh(self.dof_vel / 0.1)
+                tau_viscose = self.motor_mu_v * self.dof_vel
+                torques -= tau_sticktion+tau_viscose
             # Saturating command torques (on Solo we saturate the max currents)
             # torques = torch.clamp(torques, -3.5, 3.5)
 
@@ -1410,13 +1358,21 @@ class Go2Parkour(VecTask):
             self.commands[0, 1] = self.joystick.v_ref[1, 0]
             self.commands[0, 2] = self.joystick.v_ref[-1, 0]
             self.commands[0] *= torch.any(torch.abs(self.commands[0, :3]) > self.vel_deadzone) # set small commands to zero
-        else:
+        elif not self.cfg["env"]["onlyForwards"]:
             # Random velocity command resampling
             #no_vel_command = (torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone).float()
             #p_resample_command = 0.01 * no_vel_command # + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)
 
             # Resample with prob 2% if a velocity below 0.5 m/s is given
-            p_resample_command = 0.01 * (torch.norm(self.commands[:, :2], dim=1) < 0.5) + 0.002
+            ##p_resample_command = 0.01 * (torch.norm(self.commands[:, :2], dim=1) < 0.5) + 0.002
+            no_vel_command = torch.logical_or(
+                torch.logical_and(
+                    torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
+                    torch.abs(self.commands[:, 2]) < self.vel_deadzone
+                ),
+                self.commands[:, 0] < self.vel_deadzone,
+            ).float()
+            p_resample_command = 0.01 * no_vel_command + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)
             resample_command_idx = torch.bernoulli(p_resample_command).nonzero(as_tuple=False).flatten()
             if len(resample_command_idx) > 0:
                 self.resample_commands(resample_command_idx)
@@ -1431,13 +1387,18 @@ class Go2Parkour(VecTask):
             self.commands[:, 2] *= 1 - 2 * torch.bernoulli(torch.full_like(self.commands[:, 2], p_ang_vel)).float()
 
             # change the command direction every 100 steps
-            self.commands[(torch.arange(self.num_envs) + self.common_step_counter) % 100 == 0, 1] *= -1
+            ##self.commands[(torch.arange(self.num_envs) + self.common_step_counter) % 100 == 0, 1] *= -1
 
             # resample y command to avoid falling into lava
             y_command_pos = (self.root_states[:, 1] - self.env_origins[:, 1]) < -1.0
             self.commands[y_command_pos, 1] = torch.abs(self.commands[y_command_pos, 1])
             y_command_neg = (self.root_states[:, 1] - self.env_origins[:, 1]) > 1.0
             self.commands[y_command_neg, 1] = -torch.abs(self.commands[y_command_neg, 1])
+
+            p_zero_command = (1/3) * (self.dt / self.max_episode_length_s) * torch.ones_like(no_vel_command)
+            zero_command_idx = torch.bernoulli(p_zero_command).nonzero(as_tuple=False).flatten()
+            if len(zero_command_idx) > 0:
+                self.commands[zero_command_idx] = 0.0
 
         # Compute observations
         self.update_depth_buffer()
@@ -1532,7 +1493,7 @@ class Go2Parkour(VecTask):
             self.rew_mean = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
             self.rew_cum_reset = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
             self.rew_mean_reset = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
-
+            self.cat_discounted_cum_reward_reset = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device, requires_grad=False)
         # If there is any enabled rewards
         if self.numRewards > 0:
             for i, key in enumerate(list(self.episode_sums.keys())[:self.numRewards]):
@@ -1589,23 +1550,10 @@ class Go2Parkour(VecTask):
             np.array([
                 ["Info"] + ["Value"],
                 ["Cumulated Rewards"] + [(torch.sum(torch.mean(self.rew_cum_reset, dim=0))).item()],
+                ["Cumulated Discounted Rewards"] + [(torch.mean(self.cat_discounted_cum_reward_reset, dim=0)).item()],
                 ["Average level"] + [self.terrain_levels.float().mean().item()],
-                ["Power min"] + [self.power.min().item()],
-                ["Power mean"] + [self.power.mean().item()],
-                ["Power max"] + [self.power.max().item()],
-                ["friction min"] + [self.power_friction.min().item()],
-                ["friction mean"] + [self.power_friction.mean().item()],
-                ["friction max"] + [self.power_friction.max().item()],
-                ["joule min"] + [self.power_joule.min().item()],
-                ["joule mean"] + [self.power_joule.mean().item()],
-                ["joule max"] + [self.power_joule.max().item()],
-                ["work min"] + [self.power_work.min().item()],
-                ["work mean"] + [self.power_work.mean().item()],
-                ["work max"] + [self.power_work.max().item()],
-
             ])
         )
-
 
         # Split the table strings into lines
         lines_A = table_rew.draw().split("\n") + ["", ""] + table_rew_cum.draw().split("\n") + [""]

@@ -50,7 +50,7 @@ class Terrain:
         self.tot_cols = int(self.env_cols * self.width_per_env_pixels) + 2 * self.border
         self.tot_rows = int(self.env_rows * self.length_per_env_pixels) + 2 * self.border
         self.height_field_raw = np.zeros((self.tot_rows , self.tot_cols), dtype=np.float32)
-        self.ceilings = np.zeros((self.tot_rows , self.tot_cols), dtype=np.float32)
+        self.ceilings = np.zeros((self.tot_rows, self.tot_cols), dtype=np.float32)
 
         self.easy_mode = cfg["easy_mode"]
 
@@ -126,7 +126,7 @@ class Terrain:
                                     width=self.width_per_env_pixels,
                                     vertical_scale=self.vertical_scale,
                                     horizontal_scale=self.horizontal_scale)
-                difficulty = i / (num_levels-1.0)
+                difficulty = i / (num_levels - 1.0)
                 choice = j / num_terrains
                 lava_depth=-np.random.uniform(0.7, 1.3)
                 boxes=None
@@ -229,13 +229,14 @@ class Terrain:
                 self.ceilings[i, j] = ceiling
 
 def add_roughness(terrain, noise_magnitude=0.02):
-    random_uniform_terrain(
-        terrain,
-        min_height=-noise_magnitude,
-        max_height=noise_magnitude,
-        step=0.005,
-        downsampled_scale=0.075,
-    )
+    return
+    ##random_uniform_terrain(
+    ##    terrain,
+    ##    min_height=-noise_magnitude,
+    ##    max_height=noise_magnitude,
+    ##    step=0.005,
+    ##    downsampled_scale=0.075,
+    ##)
 
 def gap_parkour(terrain, platform_length=1., lava_width=0.5, lava_depth=-1.0, gap_length=0.5, gap_platform_length_min=1.25, gap_platform_length_max=1.5, gap_platform_height=0.05):
     platform_length = int(platform_length / terrain.horizontal_scale)

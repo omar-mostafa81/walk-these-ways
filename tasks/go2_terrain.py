@@ -83,6 +83,7 @@ class Go2Terrain(VecTask):
             self.constraints["max_air_time"] = self.cfg["env"]["learn"]["constraints_CaT"]["feetMaxAirTimeConstraint"]
             self.constraints["soft_p"] = self.cfg["env"]["learn"]["constraints_CaT"]["softPConstraint"]
             self.constraints["useSoftPCurriculum"] = self.cfg["env"]["learn"]["constraints_CaT"]["useSoftPCurriculum"]
+            self.constraints["softPCurriculumMaxEpochs"] = int(self.cfg["env"]["learn"]["constraints_CaT"]["softPCurriculumMaxEpochs"])
             self.constraints["curriculum"] = 0.0
             self.constraints["tracking"] = self.cfg["env"]["learn"]["constraints_CaT"]["trackingConstraint"]
             self.cstr_manager = ConstraintManager(tau=self.cfg["env"]["learn"]["constraints_CaT"]["tauConstraint"], 
@@ -977,6 +978,9 @@ class Go2Terrain(VecTask):
 
         # Torque regularization
         rew_torque = torch.sum(torch.square(self.torques), dim=1) * self.rew_scales["torque"]
+        """rew_torque = torch.sum(
+            torch.clip(torch.square(self.torque_limits) - torch.square(self.torques), min=0., max=None), dim=1
+        ) * self.rew_scales["torque"]"""
 
         # Action rate regularization
         rew_action_rate = torch.sum(torch.square(self.actions - self.last_actions[:, :, 0]) + 
@@ -1140,6 +1144,7 @@ class Go2Terrain(VecTask):
             base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
         cstr_base_height_max = base_height - self.limits['base_height_max']
         cstr_base_height_min = torch.any(base_height < self.limits['base_height_min'])
+        cstr_base_height_min_soft = self.limits['base_height_min_soft'] - base_height
 
         # Action rate constraint (for command smoothness)
         cstr_action_rate = torch.abs(self.actions - self.last_actions[:, :, 0]) / self.dt - self.limits["action_rate"]
@@ -1184,7 +1189,7 @@ class Go2Terrain(VecTask):
 
         zero_command_active = torch.logical_and(
             torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
-            torch.abs(self.commands[:, 2]) < 0.2
+            torch.abs(self.commands[:, 2]) < self.vel_deadzone
         )
         # Air time constraint (style constraint)
         ##cstr_air_time = (self.constraints["air_time"] - self.feet_swing_time) * self.contacts_touchdown * (torch.norm(self.commands[:, :3], dim=1) > self.vel_deadzone).float().unsqueeze(1)
@@ -1193,8 +1198,11 @@ class Go2Terrain(VecTask):
         cstr_max_air_time = (self.feet_swing_time - self.constraints["max_air_time"]) * self.contacts_touchdown * (~zero_command_active).unsqueeze(1)
 
         # Constraint to stand still when the velocity command is 0 (style constraint)
-        cstr_nomove = (torch.abs(self.dof_vel) - 4.0) * zero_command_active.float().unsqueeze(1)
+        ##cstr_nomove = (torch.abs(self.dof_vel) - 4.0) * zero_command_active.float().unsqueeze(1)
         ##cstr_nomove = (torch.norm(self.base_lin_vel[:, :2], dim=-1) - 0.10) * zero_command_active
+        ##cstr_nomove = (torch.abs(self.dof_pos - self.default_dof_pos) - 0.20) * zero_command_active.float().unsqueeze(1)
+        ##cstr_nomove_vel = (torch.abs(self.dof_vel) - 4.0) * zero_command_active.float().unsqueeze(1)
+        cstr_nomove = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 4).float() * zero_command_active.float()
 
         # Constraint to have exactly 2 feet in contact with the ground at any time when walking (style constraint)
         #cstr_2footcontact = torch.abs((self.contact_forces[:, self.grf_indices, 2] > 1.0).sum(1) - 2) * (torch.norm(self.commands[:, :3], dim=1) > 0.5).float()
@@ -1209,7 +1217,8 @@ class Go2Terrain(VecTask):
         cstr_base_orientation *= self.is_flat_terrain
         cstr_air_time *= self.is_flat_terrain.unsqueeze(1)
         cstr_2footcontact *= self.is_flat_terrain
-        cstr_nomove *= self.is_flat_terrain.unsqueeze(1)
+        cstr_nomove *= self.is_flat_terrain #.unsqueeze(1)
+        ##cstr_nomove_vel *= self.is_flat_terrain.unsqueeze(1)
 
         # ------------ Tracking constraints ----------------
 
@@ -1225,7 +1234,8 @@ class Go2Terrain(VecTask):
         # Curriculum on soft_p value (optionnal)
         # Soft and style constraints are initially less enforced to let the policy explore more.
         if self.constraints["useSoftPCurriculum"]:
-            step_cur = 1.0 / (self.cfg["horizon_length"] * self.cfg["max_epochs"])
+            ##step_cur = 1.0 / (self.cfg["horizon_length"] * self.cfg["max_epochs"])
+            step_cur = 1.0 / (self.cfg["horizon_length"] * self.constraints["softPCurriculumMaxEpochs"])
             self.constraints["curriculum"] = min(self.constraints["curriculum"] + step_cur, 1.0)
 
             # Linearly interpolate the expected time for episode end: soft_p is the maximum
@@ -1246,6 +1256,7 @@ class Go2Terrain(VecTask):
         #self.cstr_manager.add("joint_acc", cstr_joint_acc, max_p=soft_p)
         self.cstr_manager.add("joint_vel",  cstr_joint_vel, max_p=soft_p)
         self.cstr_manager.add("base_height_max", cstr_base_height_max, max_p=soft_p)
+        #self.cstr_manager.add("base_height_min", cstr_base_height_min_soft, max_p=soft_p)
         self.cstr_manager.add("action_rate", cstr_action_rate, max_p=soft_p)
         self.cstr_manager.add("foot_contact_rate", cstr_foot_contact_rate, max_p=soft_p)
         #self.cstr_manager.add("late_curriculum_foot_contact", cstr_curriculum_foot_contact, max_p=soft_p_2)
@@ -1262,8 +1273,9 @@ class Go2Terrain(VecTask):
         self.cstr_manager.add("HAA", cstr_HAA, max_p=soft_p)
         self.cstr_manager.add("base_ori", cstr_base_orientation, max_p=soft_p)
         self.cstr_manager.add("air_time", cstr_air_time, max_p=soft_p)
-        self.cstr_manager.add("max_air_time", cstr_max_air_time, max_p=1.0)
+        #self.cstr_manager.add("max_air_time", cstr_max_air_time, max_p=1.0)
         self.cstr_manager.add("no_move", cstr_nomove, max_p=soft_p)
+        ##self.cstr_manager.add("no_move_vel", cstr_nomove_vel, max_p=soft_p)
         self.cstr_manager.add("2footcontact", cstr_2footcontact, max_p=soft_p)
         self.cstr_manager.add("diagfootcontact", cstr_diagfootcontact, max_p=soft_p)
         #self.cstr_manager.add("foot_contact_vertical", cstr_foot_contact_vertical, max_p=soft_p)
@@ -1394,10 +1406,10 @@ class Go2Terrain(VecTask):
         #self.commands[env_ids] *= (torch.any(torch.abs(self.commands[env_ids, :3]) > self.vel_deadzone, dim=1)).unsqueeze(1)  # set small commands to zero
 
         # set small commands to zero
-        lin_cmd_cutoff = 0.2
-        ang_cmd_cutoff = 0.2
+        lin_cmd_cutoff = self.vel_deadzone
+        ang_cmd_cutoff = self.vel_deadzone
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > lin_cmd_cutoff).unsqueeze(1)
-        self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > ang_cmd_cutoff)
+        self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > ang_cmd_cutoff)        
 
     def update_terrain_level(self, env_ids):
         """Update terrain level of robots as they progress to put them in increasingly difficult terrains."""
@@ -1485,6 +1497,7 @@ class Go2Terrain(VecTask):
                     -100.0,  # Hard higher limit on torques
                     100.0,  # Hard lower limit on torques
                 )
+
             torques = torques * self.motor_strengths
             if self.randomize_motor_friction:
                 tau_sticktion = self.motor_Fs * torch.tanh(self.dof_vel / 0.1)
@@ -1630,11 +1643,22 @@ class Go2Terrain(VecTask):
             self.commands[0] *= torch.any(torch.abs(self.commands[0, :3]) > self.vel_deadzone) # set small commands to zero
         elif not self.cfg["env"]["onlyForwards"]:
             # Random velocity command resampling
-            no_vel_command = (torch.norm(self.commands[:, :3], dim=1) < self.vel_deadzone).float()
+
+            # The probabillity for an env that self.resample_commands produces
+            # a null command is smaller than 2.2222%
+            no_vel_command = torch.logical_and(
+                torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
+                torch.abs(self.commands[:, 2]) < self.vel_deadzone
+            ).float()
             p_resample_command = 0.01 * no_vel_command + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)
             resample_command_idx = torch.bernoulli(p_resample_command).nonzero(as_tuple=False).flatten()
             if len(resample_command_idx) > 0:
                 self.resample_commands(resample_command_idx)
+
+            # Probability to have at least a zero command during entire trajectory is:
+            # we ignore the dependency between having a zero commmand and the resampling probability
+            # P(A U B) <= 2.2222% + (1-(1-0.02222/2000)^2000) - 2.2222% * (1-(1-0.02222/2000)^2000)
+            # So the probability is less than 4.5%
 
             # Random angular velocity inversion during the episode to avoid having the robot moving in circle
             p_ang_vel = self.dt / self.max_episode_length_s # <- time step / duration of X seconds
@@ -1646,6 +1670,13 @@ class Go2Terrain(VecTask):
             if len(resample_command_idx) > 0:
                 self.resample_commands(resample_command_idx)"""
 
+            # Now we increase the 4.5% to:
+            # P(C U D) = 0.02222/2000 + 0.33333/2000 - P(C inter D) = 0.01%
+            # P(A U B) <= 2.2222% + (1-(1-P(C U D))^2000) - 2.2222% * (1-(1-P(C U D))^2000) = 31.5%
+            p_zero_command = (1/3) * (self.dt / self.max_episode_length_s) * torch.ones_like(no_vel_command)
+            zero_command_idx = torch.bernoulli(p_zero_command).nonzero(as_tuple=False).flatten()
+            if len(zero_command_idx) > 0:
+                self.commands[zero_command_idx] = 0.0
 
         # Compute observations
         self.update_depth_buffer()

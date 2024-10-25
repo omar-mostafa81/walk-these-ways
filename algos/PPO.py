@@ -230,7 +230,6 @@ def PPO(cfg: DictConfig, envs):
         for el, v in zip(envs.cstr_manager.get_names(), (100.0 * torch.mean(envs.cstr_mean_reset, dim=0)).tolist()):
             writer.add_scalar(f"cstr/{el}", v, iteration)
         writer.add_scalar("cstr/curriculum", envs.constraints["curriculum"], iteration)
-        writer.add_scalar("cstr/late_curriculum", envs.constraints["late_curriculum"], iteration)
         #monitor(envs.episode_sums, iteration)
         #for el, v in envs.episode_sums.items():
         #    writer.add_scalar(f"reward/{el}", v.mean().item(), iteration)
