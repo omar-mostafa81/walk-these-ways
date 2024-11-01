@@ -1143,7 +1143,7 @@ class Go2Terrain(VecTask):
         else:
             base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
         cstr_base_height_max = base_height - self.limits['base_height_max']
-        cstr_base_height_min = torch.any(base_height < self.limits['base_height_min'])
+        cstr_base_height_min = base_height < self.limits['base_height_min']
         cstr_base_height_min_soft = self.limits['base_height_min_soft'] - base_height
 
         # Action rate constraint (for command smoothness)

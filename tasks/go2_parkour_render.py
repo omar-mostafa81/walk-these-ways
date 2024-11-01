@@ -76,6 +76,13 @@ class Go2ParkourRender(Go2Parkour):
         self.power = self.reset_buf
 
         self.reset_env_buf = timeout | cstr_upsidedown | cstr_lava | cstr_termination_contacts | cstr_base_height_min
+        if self.reset_env_buf.any():
+            print(
+                f"cstr_upsidedown: {cstr_upsidedown.any()}, cstr_termination_contacts: {cstr_termination_contacts.any()}, "
+                f"cstr_lava: {cstr_lava.any()}, cstr_base_height_min: {cstr_base_height_min.any()}"
+            )
+            print(f"cstr_termination_contacts: {torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1.}")
+
 
 
 

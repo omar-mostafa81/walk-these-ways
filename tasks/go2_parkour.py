@@ -924,8 +924,8 @@ class Go2Parkour(VecTask):
         # Constraint to not fall outside of the tracj
         cstr_lava = self.root_states[:, 2] < -0.05
 
-        cstr_minbaseheight = (self.root_states[:, 2] - self.limits["min_base_height"]) * (self.ceilings >= 0.34).float()        
-        cstr_base_height_min = torch.any(cstr_minbaseheight < 0)
+        cstr_minbaseheight = (self.limits["min_base_height"] - self.root_states[:, 2]) * (self.ceilings >= 0.34).float()        
+        cstr_base_height_min = cstr_minbaseheight > 0
 
         # ------------ Style constraints ----------------
 
@@ -1081,6 +1081,7 @@ class Go2Parkour(VecTask):
             self.rew_mean_reset[env_ids] = self.rew_mean[env_ids] / torch.maximum(self.progress_buf[env_ids].unsqueeze(0).transpose(0, 1), torch.ones((len(env_ids), 1),  dtype=torch.long, device=self.device))
             self.rew_mean[env_ids] = 0.0
             self.cat_discounted_cum_reward_reset[env_ids] = self.cat_discounted_cum_reward[env_ids]
+            self.episode_length_reset[env_ids] = self.progress_buf[env_ids] * self.dt
 
         # Log mean value of constraints over the terminated episodes
         if self.common_step_counter > 0 and self.numConstraints > 0 and self.useConstraints in ["cat"]:
@@ -1364,15 +1365,15 @@ class Go2Parkour(VecTask):
             #p_resample_command = 0.01 * no_vel_command # + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)
 
             # Resample with prob 2% if a velocity below 0.5 m/s is given
-            ##p_resample_command = 0.01 * (torch.norm(self.commands[:, :2], dim=1) < 0.5) + 0.002
-            no_vel_command = torch.logical_or(
+            p_resample_command = 0.01 * (torch.norm(self.commands[:, :2], dim=1) < 0.5) + 0.002
+            """no_vel_command = torch.logical_or(
                 torch.logical_and(
                     torch.norm(self.commands[:, :2], dim=1) < self.vel_deadzone,
                     torch.abs(self.commands[:, 2]) < self.vel_deadzone
                 ),
                 self.commands[:, 0] < self.vel_deadzone,
             ).float()
-            p_resample_command = 0.01 * no_vel_command + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)
+            p_resample_command = 0.01 * no_vel_command + (self.dt / self.max_episode_length_s) * (1 - no_vel_command)"""
             resample_command_idx = torch.bernoulli(p_resample_command).nonzero(as_tuple=False).flatten()
             if len(resample_command_idx) > 0:
                 self.resample_commands(resample_command_idx)
@@ -1395,7 +1396,7 @@ class Go2Parkour(VecTask):
             y_command_neg = (self.root_states[:, 1] - self.env_origins[:, 1]) > 1.0
             self.commands[y_command_neg, 1] = -torch.abs(self.commands[y_command_neg, 1])
 
-            p_zero_command = (1/3) * (self.dt / self.max_episode_length_s) * torch.ones_like(no_vel_command)
+            p_zero_command = (1/3) * (self.dt / self.max_episode_length_s) * torch.ones_like(p_resample_command)
             zero_command_idx = torch.bernoulli(p_zero_command).nonzero(as_tuple=False).flatten()
             if len(zero_command_idx) > 0:
                 self.commands[zero_command_idx] = 0.0
@@ -1494,6 +1495,7 @@ class Go2Parkour(VecTask):
             self.rew_cum_reset = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
             self.rew_mean_reset = torch.zeros((self.num_envs, self.numRewards), dtype=torch.float, device=self.device, requires_grad=False)
             self.cat_discounted_cum_reward_reset = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device, requires_grad=False)
+            self.episode_length_reset = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device, requires_grad=False)
         # If there is any enabled rewards
         if self.numRewards > 0:
             for i, key in enumerate(list(self.episode_sums.keys())[:self.numRewards]):
@@ -1551,6 +1553,7 @@ class Go2Parkour(VecTask):
                 ["Info"] + ["Value"],
                 ["Cumulated Rewards"] + [(torch.sum(torch.mean(self.rew_cum_reset, dim=0))).item()],
                 ["Cumulated Discounted Rewards"] + [(torch.mean(self.cat_discounted_cum_reward_reset, dim=0)).item()],
+                ["Episode Length"] + [(torch.mean(self.episode_length_reset, dim=0)).item()],
                 ["Average level"] + [self.terrain_levels.float().mean().item()],
             ])
         )

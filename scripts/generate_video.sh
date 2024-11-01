@@ -1,5 +1,5 @@
 #!/bin/bash
-full_experiment_folder="videos/urdf_limits_ar120_fc120_zinit44_27-23-42-48"
+full_experiment_folder="videos/parkour_baseline_31-20-43-10"
 mkdir $full_experiment_folder
 
 # Loop over levels from 0 to 9
@@ -14,6 +14,7 @@ do
     terrain_args+=" task.env.terrain.maxInitMapLevel=$lvl"
 
     #######################################################################################################
-    python3 newtrain.py task=Go2ParkourRender train=SoloTerrainPPO headless=True test=True checkpoint=runs/urdf_limits_ar120_fc120_zinit44_27-23-42-48/cleanrl_model.pt task.env.onlyForwards=True num_envs=1 task.env.enableCameraSensors=True $terrain_args task.video_save_path=${full_experiment_folder}/jump_lvl${lvl}.mp4
+    #python3 newtrain.py task=Go2ParkourRender train=SoloTerrainPPO headless=True test=True checkpoint=runs/parkour_resample_ofter_longer_traj_25s_27-01-16-00/cleanrl_model.pt task.env.onlyForwards=True num_envs=1 task.env.enableCameraSensors=True $terrain_args task.video_save_path=${full_experiment_folder}/jump_lvl${lvl}.mp4
+    python3 newtrain.py task=Go2ParkourRender train=SoloTerrainPPO headless=True test=True checkpoint=runs/parkour_baseline_31-20-43-10/cleanrl_model.pt num_envs=1 task.env.enableCameraSensors=True $terrain_args task.video_save_path=${full_experiment_folder}/jump_lvl${lvl}.mp4 seed=1
 done
 rm *core*

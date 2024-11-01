@@ -202,7 +202,7 @@ env:
     pushInterval_s: 8
 
     # episode length in seconds
-    episodeLength_s: 15
+    episodeLength_s: 25 # 15
 
   # viewer cam:
   viewer:

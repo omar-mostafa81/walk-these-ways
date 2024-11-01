@@ -44,6 +44,8 @@ from isaacgymenvs.utils.utils import set_np_formatting, set_seed
 import torch
 from algos.PPO import PPO, eval_PPO
 from algos.PPORNN import PPORNN, eval_PPORNN
+from algos.DDPG_demos_generate import DDPG_demos_generate
+from algos.DDPG_demos_rnn_vision import DDPG_demos_rnn_vision
 
 @hydra.main(config_name="config", config_path="./cfg")
 def launch_rlg_hydra(cfg: DictConfig):
@@ -85,6 +87,7 @@ def launch_rlg_hydra(cfg: DictConfig):
             cfg.force_render,
             cfg
         )
+
     if cfg["test"]:
         if algo == "cat_a2c_continuous":
             eval_PPO(cfg, envs)
@@ -97,6 +100,10 @@ def launch_rlg_hydra(cfg: DictConfig):
             PPO(cfg, envs)
         elif algo == "cat_a2c_rnn_continuous":
             PPORNN(cfg, envs)
+        elif algo == "cat_ddpg_demos_generate_continuous":
+            DDPG_demos_generate(cfg, envs)
+        elif algo == "cat_ddpg_demos_rnn_vision_continuous":
+            DDPG_demos_rnn_vision(cfg, envs)
         else:
             raise NotImplementedError
 
