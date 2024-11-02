@@ -420,7 +420,7 @@ def DDPG_demos_rnn_vision(cfg: DictConfig, envs):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    run_path = f"runs/{cfg['task']['name']}_DDPG_demos_rnn_seqlen{SEQ_LEN}_bs{BATCH_SIZE}_seed{cfg.seed}_{int(time.time())}"
+    run_path = f"runs/{cfg['task']['name']}_DDPG_demos_rnn_better_cam_seqlen{SEQ_LEN}_bs{BATCH_SIZE}_seed{cfg.seed}_{int(time.time())}"
     writer = SummaryWriter(run_path)
 
     if not os.path.exists(run_path):
