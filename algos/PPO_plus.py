@@ -69,6 +69,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 class Agent(nn.Module):
     def __init__(self, envs):
         super().__init__()
+        # Critic network (Value function V(s))
         self.critic = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 512)),
             nn.ELU(),
@@ -78,6 +79,7 @@ class Agent(nn.Module):
             nn.ELU(),
             layer_init(nn.Linear(128, 1), std=1.0),
         )
+        # Actor network (Policy network π(a|s))
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 512)),
             nn.ELU(),
@@ -89,11 +91,26 @@ class Agent(nn.Module):
         )
         self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(envs.single_action_space.shape)))
 
-        self.obs_rms = RunningMeanStd(shape = envs.single_observation_space.shape)
-        self.value_rms = RunningMeanStd(shape = ())
+        # Q-value network (Q(s,a))
+        self.q_net = nn.Sequential(
+            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod() + np.array(envs.single_action_space.shape).prod(), 512)),
+            nn.ELU(),
+            layer_init(nn.Linear(512, 256)),
+            nn.ELU(),
+            layer_init(nn.Linear(256, 128)),
+            nn.ELU(),
+            layer_init(nn.Linear(128, 1), std=1.0),
+        )
+
+        self.obs_rms = RunningMeanStd(shape=envs.single_observation_space.shape)
+        self.value_rms = RunningMeanStd(shape=())
 
     def get_value(self, x):
         return self.critic(x)
+
+    def get_q_value(self, x, action):
+        x_action = torch.cat([x, action], dim=-1)
+        return self.q_net(x_action)
 
     def get_action_and_value(self, x, action=None):
         action_mean = self.actor_mean(x)
@@ -102,7 +119,9 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+        value = self.critic(x)
+        q_value = self.get_q_value(x, action)
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), value, q_value
 
 class ExtractObsWrapper(gym.ObservationWrapper):
     def observation(self, obs):
@@ -141,7 +160,7 @@ def monitor(episode_sums, iteration):
     # Print the table
     print(table.draw())
 
-def PPO(cfg: DictConfig, envs):
+def PPO_plus(cfg: DictConfig, envs):
     run_path = f"runs/{cfg['train']['params']['config']['name']}_{datetime.now().strftime('%d-%H-%M-%S')}"
 
     writer = SummaryWriter(run_path)
@@ -163,6 +182,12 @@ def PPO(cfg: DictConfig, envs):
     NORM_ADV = cfg["train"]["params"]["config"]["normalize_advantage"]
     CLIP_VLOSS = cfg["train"]["params"]["config"]["clip_value"]
     ANNEAL_LR = True
+
+    # Action improvement hyperparameters
+    N = cfg["train"]["params"]["config"].get("N", 10)  # Number of perturbations
+    sigma = cfg["train"]["params"]["config"].get("sigma", 0.1)  # Standard deviation of perturbations
+    alpha = cfg["train"]["params"]["config"].get("alpha", 0.1)  # Learning rate for action update
+    num_improvement_steps = cfg["train"]["params"]["config"].get("num_improvement_steps", 1)  # Number of improvement iterations
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -207,8 +232,37 @@ def PPO(cfg: DictConfig, envs):
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                action, logprob, _, value, _ = agent.get_action_and_value(next_obs)
                 values[step] = value.flatten()
+
+                # Action improvement loop
+                for _ in range(num_improvement_steps):
+                    # 2. Duplicate action N times
+                    action_expanded = action.unsqueeze(1).expand(-1, N, -1)  # Shape: (num_envs, N, action_dim)
+
+                    # 3. Sample perturbations noise_i ~ N(0, sigma^2 I)
+                    noise = torch.randn_like(action_expanded) * sigma  # Shape: (num_envs, N, action_dim)
+
+                    # 4. Compute perturbed actions a_i = a_t + noise_i
+                    perturbed_actions = action_expanded + noise  # Shape: (num_envs, N, action_dim)
+
+                    # 5. Compute Q(s_t, a_i)
+                    s_t_expanded = next_obs.unsqueeze(1).expand(-1, N, -1)  # Shape: (num_envs, N, obs_dim)
+                    s_t_flat = s_t_expanded.reshape(-1, s_t_expanded.shape[-1])  # Shape: (num_envs * N, obs_dim)
+                    a_i_flat = perturbed_actions.reshape(-1, perturbed_actions.shape[-1])  # Shape: (num_envs * N, action_dim)
+                    q_values = agent.get_q_value(s_t_flat, a_i_flat)  # Shape: (num_envs * N, 1)
+                    q_values = q_values.view(-1, N)  # Shape: (num_envs, N)
+
+                    # 6. Compute delta_a = alpha * (1/(N * sigma)) * sum_i Q(s_t, a_i) * noise_i
+                    weighted_noise = q_values.unsqueeze(-1) * noise  # Shape: (num_envs, N, action_dim)
+                    delta_a = alpha * (1 / (N * sigma)) * weighted_noise.sum(dim=1)  # Shape: (num_envs, action_dim)
+
+                    # 7. Update action a_t = a_t + delta_a
+                    action = action + delta_a
+
+                # Recompute logprob of the improved action under the policy
+                _, logprob, _, _, _ = agent.get_action_and_value(next_obs, action)
+
             actions[step] = action
             logprobs[step] = logprob
 
@@ -280,7 +334,7 @@ def PPO(cfg: DictConfig, envs):
                 end = start + MINIBATCH_SIZE
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue, q_value = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -315,8 +369,12 @@ def PPO(cfg: DictConfig, envs):
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
+                # Q-value loss
+                q_value = q_value.view(-1)
+                q_value_loss = 0.5 * ((q_value - b_returns[mb_inds]) ** 2).mean()
+
                 entropy_loss = entropy.mean()
-                loss = pg_loss - ENT_COEF * entropy_loss + v_loss * VF_COEF
+                loss = pg_loss - ENT_COEF * entropy_loss + v_loss * VF_COEF + q_value_loss * VF_COEF
 
                 optimizer.zero_grad()
                 loss.backward()

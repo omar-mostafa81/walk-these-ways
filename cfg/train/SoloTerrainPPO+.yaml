@@ -2,7 +2,7 @@ params:
   seed: ${...seed}
 
   algo:
-    name: cat_a2c_continuous
+    name: cat_a2c_continuous+
 
   model:
     name: continuous_a2c_logstd

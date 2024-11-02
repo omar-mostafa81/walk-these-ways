@@ -5,15 +5,14 @@
 #SBATCH --gres=gpu:1                 # number of GPUs per node
 #SBATCH --cpus-per-task=20           # number of cores per tasks
 #SBATCH --hint=nomultithread         # we get physical cores not logical
-#SBATCH --time=01:00:00              # maximum execution time (HH:MM:SS)
+#SBATCH --time=02:00:00              # maximum execution time (HH:MM:SS)
 #SBATCH --output=logs/logs_%j.out # output file name
 #SBATCH --error=logs/logs_%j.err  # error file name
-#SBATCH --array=1-5
+#SBATCH --array=1-1
 
 declare -A hyperparameters=(
-    #["task.env.learn.constraints_CaT.feetAirTimeConstraint"]="0.15 0.15 0.15 0.15 0.15 0.20 0.20 0.20 0.20 0.25 0.25 0.25 0.30 0.30"
-    #["task.env.learn.constraints_CaT.feetMaxAirTimeConstraint"]="0.15 0.20 0.25 0.30 0.35 0.20 0.25 0.30 0.35 0.25 0.30 0.35 0.30 0.35"
-     ["seed"]="1 2 3 4 5"
+    ["task.env.learn.constraints_CaT.feetAirTimeConstraint"]="15 15 15 15 15 20 20 20 20 25 25 25 30 30"
+    ["task.env.learn.constraints_CaT.feetMaxAirTimeConstraint"]="15 20 25 30 35 20 25 30 35 25 30 35 30 35"
 )
 
 hyperparam_args=""
@@ -39,5 +38,5 @@ clean_name="${hyperparam_args# }"
 # Convert hyperparam_args to a clean file name
 clean_name=$(echo "$clean_name" | tr ' ' '_' | tr -cd '[:alnum:]_-')
 
-python3 newtrain.py task=Go2Terrain train=SoloTerrainPPO  headless=True train.params.config.max_epochs=1000 $hyperparam_args train.params.config.name="BASELINE_$clean_name"
+python3 newtrain.py task=Go2Terrain train=SoloTerrainPPO  headless=True train.params.config.max_epochs=1000 $hyperparam_args train.params.config.name="$clean_name"
 #python3 newtrain.py task=Go2Terrain train=SoloTerrainPPO  headless=True $hyperparam_args train.params.config.name="$clean_name"

@@ -46,6 +46,7 @@ from algos.PPO import PPO, eval_PPO
 from algos.PPORNN import PPORNN, eval_PPORNN
 from algos.DDPG_demos_generate import DDPG_demos_generate
 from algos.DDPG_demos_rnn_vision import DDPG_demos_rnn_vision
+from algos.PPO_plus import PPO_plus
 
 @hydra.main(config_name="config", config_path="./cfg")
 def launch_rlg_hydra(cfg: DictConfig):
@@ -98,6 +99,8 @@ def launch_rlg_hydra(cfg: DictConfig):
     else:
         if algo == "cat_a2c_continuous":
             PPO(cfg, envs)
+        elif algo == "cat_a2c_continuous+":
+            PPO_plus(cfg, envs)
         elif algo == "cat_a2c_rnn_continuous":
             PPORNN(cfg, envs)
         elif algo == "cat_ddpg_demos_generate_continuous":
