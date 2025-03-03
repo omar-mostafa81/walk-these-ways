@@ -192,7 +192,8 @@ def PPO(cfg: DictConfig, envs):
     next_obs = agent.obs_rms(next_obs)
     next_done = torch.zeros(envs.num_envs, dtype=torch.float).to(device)
     next_true_done = torch.zeros(envs.num_envs, dtype=torch.float).to(device)
-
+    
+    print("Starting training")
     for iteration in range(1, NUM_ITERATIONS + 1):
         if ANNEAL_LR:
             frac = 1.0 - (iteration - 1.0) / NUM_ITERATIONS
@@ -205,7 +206,7 @@ def PPO(cfg: DictConfig, envs):
             dones[step] = next_done
             true_dones[step] = next_true_done
 
-            # ALGO LOGIC: action logic
+            # ALGO LOGIC: action logictorch.cuda.empty_cache()
             with torch.no_grad():
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
                 values[step] = value.flatten()

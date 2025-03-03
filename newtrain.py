@@ -49,6 +49,8 @@ from algos.DDPG_demos_rnn_vision import DDPG_demos_rnn_vision, eval_DDPG_demos_r
 from algos.PPO_plus import PPO_plus
 
 @hydra.main(config_name="config", config_path="./cfg")
+
+
 def launch_rlg_hydra(cfg: DictConfig):
     if cfg.pbt.enabled:
         initial_pbt_check(cfg)
@@ -80,7 +82,7 @@ def launch_rlg_hydra(cfg: DictConfig):
             cfg.task_name,
             cfg.task.env.numEnvs,
             cfg.sim_device,
-            cfg.rl_device,
+            cfg.rl_deviceval_PPOe,
             cfg.graphics_device_id,
             cfg.headless,
             cfg.multi_gpu,
@@ -88,6 +90,8 @@ def launch_rlg_hydra(cfg: DictConfig):
             cfg.force_render,
             cfg
         )
+    
+    print("Env created")
 
     if cfg["test"]:
         if algo == "cat_a2c_continuous":

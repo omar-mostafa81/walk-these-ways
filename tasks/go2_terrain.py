@@ -158,7 +158,7 @@ class Go2Terrain(VecTask):
         # Initialization of the parent class VecTask
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id,
                          headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
-
+        
         # Reapply time step value because it gets overwritten in VecTask
         self.dt = self.decimation * self.cfg["sim"]["dt"]
 
@@ -176,22 +176,25 @@ class Go2Terrain(VecTask):
 
         self.use_actuator_net = self.cfg["env"]["control"]["useActuatorNet"]
         if self.use_actuator_net:
-            actuator_path = f'{os.path.dirname(os.path.dirname(os.path.realpath(__file__)))}/resources/actuator_nets/unitree_go1.pt'
+            actuator_path = f'{os.path.dirname(os.path.dirname(os.path.realpath(__file__)))}/resources/actuator_nets/unitree_go2_sim.pt'
+            print(actuator_path)
             actuator_network = torch.jit.load(actuator_path).to(self.device)
-
-            def eval_actuator_network(joint_pos, joint_pos_last, joint_pos_last_last, joint_vel, joint_vel_last,
-                                      joint_vel_last_last):
-                xs = torch.cat((joint_pos.unsqueeze(-1),
-                                joint_pos_last.unsqueeze(-1),
-                                joint_pos_last_last.unsqueeze(-1),
-                                joint_vel.unsqueeze(-1),
-                                joint_vel_last.unsqueeze(-1),
-                                joint_vel_last_last.unsqueeze(-1)), dim=-1)
-                with torch.no_grad():
-                    torques = actuator_network(xs.view(self.num_envs * 12, 6))
-                return torques.view(self.num_envs, 12)
+            actuator_network.eval()
+            with torch.no_grad():
+                def eval_actuator_network(joint_pos, joint_pos_last, joint_pos_last_last, joint_vel, joint_vel_last,
+                                        joint_vel_last_last):
+                    xs = torch.cat((joint_pos.unsqueeze(-1),
+                                    joint_pos_last.unsqueeze(-1),
+                                    joint_pos_last_last.unsqueeze(-1),
+                                    joint_vel.unsqueeze(-1),
+                                    joint_vel_last.unsqueeze(-1),
+                                    joint_vel_last_last.unsqueeze(-1)), dim=-1)
+                    with torch.no_grad():
+                        torques = actuator_network(xs.view(self.num_envs * 12, 6))
+                    return torques.view(self.num_envs, 12)
 
             self.actuator_network = eval_actuator_network
+            print("Actuator network loaded")
 
             self.joint_pos_err_last_last = torch.zeros((self.num_envs, 12), device=self.device)
             self.joint_pos_err_last = torch.zeros((self.num_envs, 12), device=self.device)

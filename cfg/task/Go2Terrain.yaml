@@ -61,7 +61,7 @@ env:
     yaw: [-1.0, 1.0] # min max [rad/s]
 
   control:
-    useActuatorNet: false
+    useActuatorNet: true
     # PD Drive parameters:
     stiffness: 20.0 # [N*m/rad]
     damping: 0.5 # [N*m*s/rad]
