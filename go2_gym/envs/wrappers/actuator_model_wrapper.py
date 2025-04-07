@@ -3,7 +3,8 @@ import numpy as np
 import time
 import torch
 from collections import deque
-from scipy.interpolate import interp1d
+from torchcubicspline import(natural_cubic_spline_coeffs, 
+                             NaturalCubicSpline)
 
 class ActuatorModelWrapper(gym.Wrapper):
     def __init__(self, env, delay = 1, history_duration = 10, alpha = 0.9, mu_v = 0.1, Fs = 0.3, Vs = 0.5, temperature=0.1):
@@ -31,7 +32,7 @@ class ActuatorModelWrapper(gym.Wrapper):
         self.history_duration = history_duration
         self.time_buffers = [deque() for _ in range(self.env.num_envs)]
         self.action_buffers = [deque() for _ in range(self.env.num_envs)]
-        self.prev_actions = np.zeros((self.env.num_envs, self.env.action_space.shape[0]), dtype=np.float32)
+        self.prev_actions = torch.zeros((self.env.num_envs, self.env.action_space.shape[0]), dtype=torch.float32, device=self.env.device)
 
         print("friction model is called")
 
@@ -41,7 +42,7 @@ class ActuatorModelWrapper(gym.Wrapper):
         # Reset buffers/variables
         self.time_buffers = [deque() for _ in range(self.env.num_envs)]
         self.action_buffers = [deque() for _ in range(self.env.num_envs)]
-        self.prev_actions = np.zeros((self.env.num_envs, self.env.action_space.shape[0]), dtype=np.float32)
+        self.prev_actions = torch.zeros((self.env.num_envs, self.env.action_space.shape[0]), dtype=torch.float32, device=self.env.device)
 
         return obs
     
@@ -64,7 +65,7 @@ class ActuatorModelWrapper(gym.Wrapper):
         delayed_actions = self.apply_delay()
         print("Delayed action is: ", delayed_actions[0]) # TO REMOVE
         # Apply friction
-        dq = self.env.dof_vel.cpu().numpy()
+        dq = self.env.dof_vel
         delayed_actions = delayed_actions - self.compute_friction(dq) 
         # Apply LowPassFilter based on bandwidth
         filtered_actions = self.apply_LPF(delayed_actions)
@@ -76,17 +77,16 @@ class ActuatorModelWrapper(gym.Wrapper):
         return self.env.step(final_actions)
     
     def apply_delay(self):
-        delayed_actions = []
-        for i in range(self.env.num_envs):
-            if len(self.time_buffers[i]) < 2:
-                delayed_actions.append(self.action_buffers[i][0])
-            else:
-                time = np.array(self.time_buffers[i])
-                actions = np.vstack(self.action_buffers[i])
-                # Apply cubic interpolation for smooth actions | TODO: maybe quadratic instead of cubic to avoid overfitting? 
-                cont_f = interp1d(time, actions, axis=0, kind='cubic', bounds_error=True)
-                delayed_actions.append(cont_f(self.current_time + self.delay))
-        return delayed_actions
+        # Build tensors
+        x = torch.tensor([list(tb) for tb in self.time_buffers], dtype=torch.float32)  # (num_envs, K)
+        y = torch.tensor([list(ab) for ab in self.action_buffers], dtype=torch.float32)  # (num_envs, K, action_dim)
+        t = torch.full((self.env.num_envs,), self.current_time - self.delay, dtype=torch.float32)  # target eval time for each env
+
+        coeffs = natural_cubic_spline_coeffs(x, y)  # shape: (num_envs, K, action_dim)
+        # Apply interpolation 
+        spline = NaturalCubicSpline(coeffs)
+        interpolated_actions = spline.evaluate(t)   # shape: (num_envs, action_dim)
+        return interpolated_actions
 
     def apply_LPF(self, actions):
         filtered_actions = (self.alpha * actions) + (1-self.alpha) * self.prev_actions 
