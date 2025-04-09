@@ -6,7 +6,7 @@ from go2_gym.envs.go2.go2_config import config_go2
 import torch
 
 config_go2(Cfg)
-test_env = VelocityTrackingEasyEnv(cfg=Cfg, sim_device='cpu', headless=False)
+test_env = VelocityTrackingEasyEnv(cfg=Cfg, sim_device='cuda', headless=False)
 env = ActuatorModelWrapper(test_env)
 
 obs = env.reset()

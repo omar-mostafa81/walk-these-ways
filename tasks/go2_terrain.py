@@ -176,7 +176,7 @@ class Go2Terrain(VecTask):
 
         self.use_actuator_net = self.cfg["env"]["control"]["useActuatorNet"]
         if self.use_actuator_net:
-            actuator_path = f'{os.path.dirname(os.path.dirname(os.path.realpath(__file__)))}/resources/actuator_nets/unitree_go2_sim.pt'
+            actuator_path = f'{os.path.dirname(os.path.dirname(os.path.realpath(__file__)))}/resources/actuator_nets/unitree_go2.pt'
             print(actuator_path)
             actuator_network = torch.jit.load(actuator_path).to(self.device)
             actuator_network.eval()

@@ -2,7 +2,8 @@ from isaacgym import gymutil, gymapi
 import torch
 from params_proto import Meta
 from typing import Union
-
+from gym import spaces
+import numpy as np
 from go2_gym.envs.base.legged_robot import LeggedRobot
 from go2_gym.envs.base.legged_robot_config import Cfg
 
@@ -17,8 +18,7 @@ class VelocityTrackingEasyEnv(LeggedRobot):
         sim_params = gymapi.SimParams()
         gymutil.parse_sim_config(vars(cfg.sim), sim_params)
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless, eval_cfg, initial_dynamics_dict)
-
-
+        self.action_space = spaces.Box(np.ones(cfg.env.num_actions) * -1., np.ones(cfg.env.num_actions) * 1.)
     def step(self, actions):
         self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras = super().step(actions)
 

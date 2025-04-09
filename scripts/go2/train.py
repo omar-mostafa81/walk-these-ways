@@ -7,6 +7,7 @@ def train_go2(headless=True):
     from go2_gym.envs.base.legged_robot_config import Cfg
     from go2_gym.envs.go2.go2_config import config_go2
     from go2_gym.envs.go2.velocity_tracking import VelocityTrackingEasyEnv
+    from go2_gym.envs.wrappers.actuator_model_wrapper import ActuatorModelWrapper
 
     from ml_logger import logger
 
@@ -204,7 +205,8 @@ def train_go2(headless=True):
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    test_env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
+    env = ActuatorModelWrapper(test_env)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),

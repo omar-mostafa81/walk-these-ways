@@ -255,6 +255,7 @@ class Cfg(PrefixProto, cli=False):
         com_displacement_range = [-0.15, 0.15]
         randomize_motor_strength = False
         motor_strength_range = [0.9, 1.1]
+        randomize_motor_offset = False
         randomize_Kp_factor = False
         Kp_factor_range = [0.8, 1.3]
         randomize_Kd_factor = False
